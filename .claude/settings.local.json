@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.ynab.com)",
+      "WebSearch",
+      "Bash(pip install:*)",
+      "Bash(uv run:*)",
+      "Bash(uv pip:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,14 @@
+[project]
+name = "ynab-mcp"
+version = "0.1.0"
+description = "MCP server for YNAB (You Need A Budget) integration"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "ynab-sdk>=0.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
