@@ -167,6 +167,54 @@ async def get_unapproved_transactions(budget_id: str) -> str:
     return json.dumps(result, indent=2)
 
 
+@mcp.tool()
+async def update_category_budget(
+    budget_id: str,
+    month: str,
+    category_id: str,
+    budgeted: float,
+) -> str:
+    """Update the budgeted amount for a category in a specific month.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        month: Month in YYYY-MM-DD format (e.g., 2025-01-01 for January 2025)
+        category_id: The category ID to update
+        budgeted: The budgeted amount to set
+
+    Returns:
+        JSON string with the updated category
+    """
+    client = get_ynab_client()
+    result = await client.update_category_budget(budget_id, month, category_id, budgeted)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def move_category_funds(
+    budget_id: str,
+    month: str,
+    from_category_id: str,
+    to_category_id: str,
+    amount: float,
+) -> str:
+    """Move funds from one category to another in a specific month.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        month: Month in YYYY-MM-DD format (e.g., 2025-01-01 for January 2025)
+        from_category_id: Source category ID to move funds from
+        to_category_id: Destination category ID to move funds to
+        amount: Amount to move (positive value)
+
+    Returns:
+        JSON string with updated from and to categories
+    """
+    client = get_ynab_client()
+    result = await client.move_category_funds(budget_id, month, from_category_id, to_category_id, amount)
+    return json.dumps(result, indent=2)
+
+
 def main():
     """Entry point for the MCP server."""
     mcp.run(transport="stdio")

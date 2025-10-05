@@ -56,6 +56,8 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 ### Category & Budget Management
 - `get_categories` - Get all categories for a budget
 - `get_budget_summary` - Get budget summary for a specific month
+- `update_category_budget` - Update the budgeted amount for a category in a specific month
+- `move_category_funds` - Move funds from one category to another
 
 ### Transaction Management
 - `get_transactions` - Get transactions with optional filtering by date, account, or category

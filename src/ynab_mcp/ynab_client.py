@@ -356,3 +356,112 @@ class YNABClient:
             return transactions
         except Exception as e:
             raise Exception(f"Failed to get unapproved transactions: {e}")
+
+    async def update_category_budget(
+        self,
+        budget_id: str,
+        month: str,
+        category_id: str,
+        budgeted: float,
+    ) -> Dict[str, Any]:
+        """Update the budgeted amount for a category in a specific month.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            month: Month in YYYY-MM-DD format (e.g., 2025-01-01)
+            category_id: The category ID to update
+            budgeted: The budgeted amount to set
+
+        Returns:
+            Updated category dictionary
+        """
+        try:
+            from ynab_sdk.api.models.requests.category import CategoryRequest
+
+            category = CategoryRequest(
+                budgeted=int(budgeted * 1000)  # Convert to milliunits
+            )
+
+            response = self.client.categories.update_month_category(
+                budget_id, month, category_id, category
+            )
+            cat = response.data.category
+
+            return {
+                "id": cat.id,
+                "name": cat.name,
+                "budgeted": cat.budgeted / 1000 if cat.budgeted else 0,
+                "activity": cat.activity / 1000 if cat.activity else 0,
+                "balance": cat.balance / 1000 if cat.balance else 0,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to update category budget: {e}")
+
+    async def move_category_funds(
+        self,
+        budget_id: str,
+        month: str,
+        from_category_id: str,
+        to_category_id: str,
+        amount: float,
+    ) -> Dict[str, Any]:
+        """Move funds from one category to another in a specific month.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            month: Month in YYYY-MM-DD format (e.g., 2025-01-01)
+            from_category_id: Source category ID
+            to_category_id: Destination category ID
+            amount: Amount to move (positive value)
+
+        Returns:
+            Dictionary with updated from and to categories
+        """
+        try:
+            # Get current budgeted amounts
+            month_response = self.client.months.get_month(budget_id, month)
+            categories = {}
+            for group in month_response.data.month.categories:
+                for cat in group.categories:
+                    if cat.id in [from_category_id, to_category_id]:
+                        categories[cat.id] = cat.budgeted
+
+            if from_category_id not in categories or to_category_id not in categories:
+                raise ValueError("One or both category IDs not found")
+
+            from ynab_sdk.api.models.requests.category import CategoryRequest
+
+            # Subtract from source category
+            from_budgeted = (categories[from_category_id] / 1000) - amount
+            from_category = CategoryRequest(budgeted=int(from_budgeted * 1000))
+            from_response = self.client.categories.update_month_category(
+                budget_id, month, from_category_id, from_category
+            )
+
+            # Add to destination category
+            to_budgeted = (categories[to_category_id] / 1000) + amount
+            to_category = CategoryRequest(budgeted=int(to_budgeted * 1000))
+            to_response = self.client.categories.update_month_category(
+                budget_id, month, to_category_id, to_category
+            )
+
+            from_cat = from_response.data.category
+            to_cat = to_response.data.category
+
+            return {
+                "from_category": {
+                    "id": from_cat.id,
+                    "name": from_cat.name,
+                    "budgeted": from_cat.budgeted / 1000 if from_cat.budgeted else 0,
+                    "balance": from_cat.balance / 1000 if from_cat.balance else 0,
+                },
+                "to_category": {
+                    "id": to_cat.id,
+                    "name": to_cat.name,
+                    "budgeted": to_cat.budgeted / 1000 if to_cat.budgeted else 0,
+                    "balance": to_cat.balance / 1000 if to_cat.balance else 0,
+                },
+                "amount_moved": amount,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to move category funds: {e}")
