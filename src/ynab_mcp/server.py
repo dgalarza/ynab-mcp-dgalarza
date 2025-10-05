@@ -27,17 +27,33 @@ def get_ynab_client() -> YNABClient:
 
 
 @mcp.tool()
-async def get_categories(budget_id: str) -> str:
-    """Get all categories for a budget.
+async def get_accounts(budget_id: str) -> str:
+    """Get all accounts for a budget.
 
     Args:
         budget_id: The ID of the budget (use 'last-used' for default budget)
 
     Returns:
+        JSON string with list of accounts
+    """
+    client = get_ynab_client()
+    result = await client.get_accounts(budget_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_categories(budget_id: str, include_hidden: bool = False) -> str:
+    """Get all categories for a budget.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        include_hidden: Include hidden categories and groups (default: False)
+
+    Returns:
         JSON string with category groups and categories
     """
     client = get_ynab_client()
-    result = await client.get_categories(budget_id)
+    result = await client.get_categories(budget_id, include_hidden)
     return json.dumps(result, indent=2)
 
 
@@ -187,6 +203,31 @@ async def update_category_budget(
     """
     client = get_ynab_client()
     result = await client.update_category_budget(budget_id, month, category_id, budgeted)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def update_category(
+    budget_id: str,
+    category_id: str,
+    name: str = None,
+    note: str = None,
+    category_group_id: str = None,
+) -> str:
+    """Update a category's properties (rename, change note, or move to different group).
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        category_id: The category ID to update
+        name: New name for the category (optional)
+        note: New note for the category (optional)
+        category_group_id: Move to a different category group ID (optional)
+
+    Returns:
+        JSON string with the updated category
+    """
+    client = get_ynab_client()
+    result = await client.update_category(budget_id, category_id, name, note, category_group_id)
     return json.dumps(result, indent=2)
 
 

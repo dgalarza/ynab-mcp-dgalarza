@@ -53,11 +53,43 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to get budgets: {e}")
 
-    async def get_categories(self, budget_id: str) -> List[Dict[str, Any]]:
+    async def get_accounts(self, budget_id: str) -> List[Dict[str, Any]]:
+        """Get all accounts for a budget.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+
+        Returns:
+            List of account dictionaries
+        """
+        try:
+            response = self.client.accounts.get_accounts(budget_id)
+            accounts = []
+
+            for account in response.data.accounts:
+                # Skip deleted accounts
+                if account.deleted:
+                    continue
+
+                accounts.append({
+                    "id": account.id,
+                    "name": account.name,
+                    "type": account.type,
+                    "on_budget": account.on_budget,
+                    "closed": account.closed,
+                    "balance": account.balance / 1000 if account.balance else 0,
+                })
+
+            return accounts
+        except Exception as e:
+            raise Exception(f"Failed to get accounts: {e}")
+
+    async def get_categories(self, budget_id: str, include_hidden: bool = False) -> List[Dict[str, Any]]:
         """Get all categories for a budget.
 
         Args:
             budget_id: The budget ID or 'last-used'
+            include_hidden: Include hidden categories and groups (default: False)
 
         Returns:
             List of category dictionaries grouped by category groups
@@ -69,14 +101,20 @@ class YNABClient:
             for group in response.data.category_groups:
                 categories = []
                 for category in group.categories:
+                    # Skip hidden and deleted categories unless requested
+                    if not include_hidden and (category.hidden or category.deleted):
+                        continue
+
                     categories.append({
                         "id": category.id,
                         "name": category.name,
-                        "hidden": category.hidden,
-                        "budgeted": category.budgeted / 1000 if category.budgeted else 0,  # Convert from milliunits
-                        "activity": category.activity / 1000 if category.activity else 0,
                         "balance": category.balance / 1000 if category.balance else 0,
+                        "hidden": category.hidden,
                     })
+
+                # Skip hidden groups unless requested, and skip empty groups
+                if (not include_hidden and group.hidden) or not categories:
+                    continue
 
                 category_groups.append({
                     "id": group.id,
@@ -115,29 +153,42 @@ class YNABClient:
 
             month_data = result["data"]["month"]
 
+            # Debug: Check what keys are available
+            if "categories" not in month_data:
+                raise Exception(f"Month data keys: {list(month_data.keys())}")
+
+            # Get category groups to map category IDs to group names
+            categories_response = self.client.categories.get_categories(budget_id)
+            category_group_map = {}
+            for group in categories_response.data.category_groups:
+                for cat in group.categories:
+                    category_group_map[cat.id] = group.name
+
             # Calculate totals and collect category details
             total_budgeted = 0
             total_activity = 0
             total_balance = 0
             categories = []
 
-            for group in month_data["categories"]:
-                for category in group["categories"]:
-                    budgeted = category["budgeted"] / 1000 if category["budgeted"] else 0
-                    activity = category["activity"] / 1000 if category["activity"] else 0
-                    balance = category["balance"] / 1000 if category["balance"] else 0
+            # Month data has a flat list of categories, not grouped
+            for category in month_data.get("categories", []):
+                budgeted = category["budgeted"] / 1000 if category["budgeted"] else 0
+                activity = category["activity"] / 1000 if category["activity"] else 0
+                balance = category["balance"] / 1000 if category["balance"] else 0
 
-                    total_budgeted += budgeted
-                    total_activity += activity
-                    total_balance += balance
+                total_budgeted += budgeted
+                total_activity += activity
+                total_balance += balance
 
-                    categories.append({
-                        "category_group": group["name"],
-                        "category_name": category["name"],
-                        "budgeted": budgeted,
-                        "activity": activity,
-                        "balance": balance,
-                    })
+                category_group_name = category_group_map.get(category["id"], "Unknown")
+
+                categories.append({
+                    "category_group": category_group_name,
+                    "category_name": category["name"],
+                    "budgeted": budgeted,
+                    "activity": activity,
+                    "balance": balance,
+                })
 
             return {
                 "month": month,
@@ -170,45 +221,46 @@ class YNABClient:
             List of transaction dictionaries
         """
         try:
-            # Get transactions - SDK only supports get_transactions and get_transactions_by_account
+            # Use direct API call for better filtering support
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+            params = {}
+            if since_date:
+                params["since_date"] = since_date
             if account_id:
-                if since_date:
-                    response = self.client.transactions.get_transactions_by_account(
-                        budget_id, account_id, since_date
-                    )
-                else:
-                    response = self.client.transactions.get_transactions_by_account(
-                        budget_id, account_id
-                    )
-            else:
-                if since_date:
-                    response = self.client.transactions.get_transactions(
-                        budget_id, since_date
-                    )
-                else:
-                    response = self.client.transactions.get_transactions(budget_id)
+                url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}/transactions"
+
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                result = response.json()
+
+            txn_data = result["data"]["transactions"]
 
             transactions = []
-            for txn in response.data.transactions:
-                # Filter by category_id if provided (SDK doesn't support this natively)
-                if category_id and txn.category_id != category_id:
+            for txn in txn_data:
+                # Filter by category_id if provided
+                if category_id and txn.get("category_id") != category_id:
                     continue
 
                 transactions.append({
-                    "id": txn.id,
-                    "date": str(txn.date),
-                    "amount": txn.amount / 1000 if txn.amount else 0,
-                    "memo": txn.memo,
-                    "cleared": txn.cleared,
-                    "approved": txn.approved,
-                    "account_id": txn.account_id,
-                    "account_name": txn.account_name,
-                    "payee_id": txn.payee_id,
-                    "payee_name": txn.payee_name,
-                    "category_id": txn.category_id,
-                    "category_name": txn.category_name,
-                    "transfer_account_id": txn.transfer_account_id,
-                    "deleted": txn.deleted,
+                    "id": txn["id"],
+                    "date": txn["date"],
+                    "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                    "memo": txn.get("memo"),
+                    "cleared": txn.get("cleared"),
+                    "approved": txn.get("approved"),
+                    "account_id": txn.get("account_id"),
+                    "account_name": txn.get("account_name"),
+                    "payee_id": txn.get("payee_id"),
+                    "payee_name": txn.get("payee_name"),
+                    "category_id": txn.get("category_id"),
+                    "category_name": txn.get("category_name"),
+                    "transfer_account_id": txn.get("transfer_account_id"),
+                    "deleted": txn.get("deleted"),
                 })
 
             return transactions
@@ -426,6 +478,65 @@ class YNABClient:
             }
         except Exception as e:
             raise Exception(f"Failed to update category budget: {e}")
+
+    async def update_category(
+        self,
+        budget_id: str,
+        category_id: str,
+        name: Optional[str] = None,
+        note: Optional[str] = None,
+        category_group_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update a category's properties.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            category_id: The category ID to update
+            name: New name for the category (optional)
+            note: New note for the category (optional)
+            category_group_id: Move to a different category group (optional)
+
+        Returns:
+            Updated category dictionary
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
+
+            # Build update payload with only provided fields
+            category_data = {}
+            if name is not None:
+                category_data["name"] = name
+            if note is not None:
+                category_data["note"] = note
+            if category_group_id is not None:
+                category_data["category_group_id"] = category_group_id
+
+            if not category_data:
+                raise ValueError("At least one field (name, note, or category_group_id) must be provided")
+
+            data = {"category": category_data}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.patch(url, json=data, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            cat = result["data"]["category"]
+            return {
+                "id": cat["id"],
+                "name": cat["name"],
+                "category_group_id": cat.get("category_group_id"),
+                "note": cat.get("note"),
+                "budgeted": cat.get("budgeted", 0) / 1000 if cat.get("budgeted") else 0,
+                "activity": cat.get("activity", 0) / 1000 if cat.get("activity") else 0,
+                "balance": cat.get("balance", 0) / 1000 if cat.get("balance") else 0,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to update category: {e}")
 
     async def move_category_funds(
         self,
