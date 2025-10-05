@@ -84,6 +84,50 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to get accounts: {e}")
 
+    async def get_category(self, budget_id: str, category_id: str) -> Dict[str, Any]:
+        """Get a single category with all details including goal information.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            category_id: The category ID
+
+        Returns:
+            Category dictionary with full details
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            cat = result["data"]["category"]
+
+            return {
+                "id": cat["id"],
+                "name": cat["name"],
+                "category_group_id": cat.get("category_group_id"),
+                "hidden": cat.get("hidden"),
+                "note": cat.get("note"),
+                "budgeted": cat.get("budgeted", 0) / 1000 if cat.get("budgeted") else 0,
+                "activity": cat.get("activity", 0) / 1000 if cat.get("activity") else 0,
+                "balance": cat.get("balance", 0) / 1000 if cat.get("balance") else 0,
+                "goal_type": cat.get("goal_type"),
+                "goal_target": cat.get("goal_target", 0) / 1000 if cat.get("goal_target") else 0,
+                "goal_target_month": cat.get("goal_target_month"),
+                "goal_percentage_complete": cat.get("goal_percentage_complete"),
+                "goal_months_to_budget": cat.get("goal_months_to_budget"),
+                "goal_under_funded": cat.get("goal_under_funded", 0) / 1000 if cat.get("goal_under_funded") else 0,
+                "goal_overall_funded": cat.get("goal_overall_funded", 0) / 1000 if cat.get("goal_overall_funded") else 0,
+                "goal_overall_left": cat.get("goal_overall_left", 0) / 1000 if cat.get("goal_overall_left") else 0,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get category: {e}")
+
     async def get_categories(self, budget_id: str, include_hidden: bool = False) -> List[Dict[str, Any]]:
         """Get all categories for a budget.
 
@@ -206,19 +250,25 @@ class YNABClient:
         self,
         budget_id: str,
         since_date: Optional[str] = None,
+        until_date: Optional[str] = None,
         account_id: Optional[str] = None,
         category_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Get transactions with optional filtering.
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Get transactions with optional filtering and pagination.
 
         Args:
             budget_id: The budget ID or 'last-used'
             since_date: Only return transactions on or after this date (YYYY-MM-DD)
+            until_date: Only return transactions on or before this date (YYYY-MM-DD)
             account_id: Filter by account ID
             category_id: Filter by category ID
+            limit: Number of transactions per page (default: 100, max: 500)
+            page: Page number for pagination (1-indexed, default: 1)
 
         Returns:
-            List of transaction dictionaries
+            Dictionary with transactions, pagination info, and total count
         """
         try:
             # Use direct API call for better filtering support
@@ -240,12 +290,33 @@ class YNABClient:
 
             txn_data = result["data"]["transactions"]
 
-            transactions = []
+            # Apply filters
+            filtered_transactions = []
             for txn in txn_data:
                 # Filter by category_id if provided
                 if category_id and txn.get("category_id") != category_id:
                     continue
 
+                # Filter by until_date if provided (client-side filtering)
+                if until_date and txn["date"] > until_date:
+                    continue
+
+                filtered_transactions.append(txn)
+
+            # Pagination
+            page_size = min(limit or 100, 500)  # Default 100, max 500
+            page_num = max(page or 1, 1)  # Default to page 1, minimum 1
+
+            total_count = len(filtered_transactions)
+            total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+
+            start_idx = (page_num - 1) * page_size
+            end_idx = start_idx + page_size
+
+            paginated_txns = filtered_transactions[start_idx:end_idx]
+
+            transactions = []
+            for txn in paginated_txns:
                 transactions.append({
                     "id": txn["id"],
                     "date": txn["date"],
@@ -263,9 +334,98 @@ class YNABClient:
                     "deleted": txn.get("deleted"),
                 })
 
-            return transactions
+            return {
+                "transactions": transactions,
+                "pagination": {
+                    "page": page_num,
+                    "per_page": page_size,
+                    "total_count": total_count,
+                    "total_pages": total_pages,
+                    "has_next_page": page_num < total_pages,
+                    "has_prev_page": page_num > 1,
+                }
+            }
         except Exception as e:
             raise Exception(f"Failed to get transactions: {e}")
+
+    async def search_transactions(
+        self,
+        budget_id: str,
+        search_term: str,
+        since_date: Optional[str] = None,
+        until_date: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Search transactions by text matching in payee name or memo.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            search_term: Text to search for in payee name or memo (case-insensitive)
+            since_date: Only return transactions on or after this date (YYYY-MM-DD)
+            until_date: Only return transactions on or before this date (YYYY-MM-DD)
+            limit: Maximum number of transactions to return (default: 100, max: 500)
+
+        Returns:
+            Dictionary with matching transactions and count
+        """
+        try:
+            # Get all transactions with date filtering
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+            params = {}
+            if since_date:
+                params["since_date"] = since_date
+
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                result = response.json()
+
+            txn_data = result["data"]["transactions"]
+
+            # Search and filter
+            search_lower = search_term.lower()
+            matching_transactions = []
+
+            for txn in txn_data:
+                # Filter by until_date if provided
+                if until_date and txn["date"] > until_date:
+                    continue
+
+                # Search in payee_name and memo
+                payee_name = (txn.get("payee_name") or "").lower()
+                memo = (txn.get("memo") or "").lower()
+
+                if search_lower in payee_name or search_lower in memo:
+                    matching_transactions.append({
+                        "id": txn["id"],
+                        "date": txn["date"],
+                        "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                        "memo": txn.get("memo"),
+                        "cleared": txn.get("cleared"),
+                        "approved": txn.get("approved"),
+                        "account_id": txn.get("account_id"),
+                        "account_name": txn.get("account_name"),
+                        "payee_id": txn.get("payee_id"),
+                        "payee_name": txn.get("payee_name"),
+                        "category_id": txn.get("category_id"),
+                        "category_name": txn.get("category_name"),
+                    })
+
+                    # Apply limit if specified
+                    if limit and len(matching_transactions) >= limit:
+                        break
+
+            return {
+                "search_term": search_term,
+                "transactions": matching_transactions,
+                "count": len(matching_transactions),
+            }
+        except Exception as e:
+            raise Exception(f"Failed to search transactions: {e}")
 
     async def create_transaction(
         self,
@@ -374,40 +534,53 @@ class YNABClient:
             Updated transaction dictionary
         """
         try:
-            from ynab_sdk.api.models.requests.transaction import TransactionRequest
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{transaction_id}"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
 
-            # First get the existing transaction
-            existing = self.client.transactions.get_transaction_by_id(budget_id, transaction_id)
-            existing_txn = existing.data.transaction
+            # Build update payload with only provided fields
+            transaction_data = {}
+            if account_id is not None:
+                transaction_data["account_id"] = account_id
+            if date is not None:
+                transaction_data["date"] = date
+            if amount is not None:
+                transaction_data["amount"] = int(amount * 1000)  # Convert to milliunits
+            if payee_name is not None:
+                transaction_data["payee_name"] = payee_name
+            if category_id is not None:
+                transaction_data["category_id"] = category_id
+            if memo is not None:
+                transaction_data["memo"] = memo
+            if cleared is not None:
+                transaction_data["cleared"] = cleared
+            if approved is not None:
+                transaction_data["approved"] = approved
 
-            # Build update with provided values or existing values
-            transaction = TransactionRequest(
-                account_id=account_id if account_id else existing_txn.account_id,
-                date=datetime.strptime(date, "%Y-%m-%d").date() if date else existing_txn.date,
-                amount=int(amount * 1000) if amount is not None else existing_txn.amount,
-                payee_name=payee_name if payee_name is not None else existing_txn.payee_name,
-                category_id=category_id if category_id is not None else existing_txn.category_id,
-                memo=memo if memo is not None else existing_txn.memo,
-                cleared=cleared if cleared else existing_txn.cleared,
-                approved=approved if approved is not None else existing_txn.approved,
-            )
+            data = {"transaction": transaction_data}
 
-            response = self.client.transactions.update_transaction(budget_id, transaction_id, transaction)
-            txn = response.data.transaction
+            async with httpx.AsyncClient() as client:
+                response = await client.put(url, json=data, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            txn = result["data"]["transaction"]
 
             return {
-                "id": txn.id,
-                "date": str(txn.date),
-                "amount": txn.amount / 1000 if txn.amount else 0,
-                "memo": txn.memo,
-                "cleared": txn.cleared,
-                "approved": txn.approved,
-                "account_id": txn.account_id,
-                "account_name": txn.account_name,
-                "payee_id": txn.payee_id,
-                "payee_name": txn.payee_name,
-                "category_id": txn.category_id,
-                "category_name": txn.category_name,
+                "id": txn["id"],
+                "date": txn["date"],
+                "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                "memo": txn.get("memo"),
+                "cleared": txn.get("cleared"),
+                "approved": txn.get("approved"),
+                "account_id": txn.get("account_id"),
+                "account_name": txn.get("account_name"),
+                "payee_id": txn.get("payee_id"),
+                "payee_name": txn.get("payee_name"),
+                "category_id": txn.get("category_id"),
+                "category_name": txn.get("category_name"),
             }
         except Exception as e:
             raise Exception(f"Failed to update transaction: {e}")
@@ -500,6 +673,7 @@ class YNABClient:
         name: Optional[str] = None,
         note: Optional[str] = None,
         category_group_id: Optional[str] = None,
+        goal_target: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update a category's properties.
 
@@ -509,6 +683,7 @@ class YNABClient:
             name: New name for the category (optional)
             note: New note for the category (optional)
             category_group_id: Move to a different category group (optional)
+            goal_target: New goal target amount - only works if category already has a goal configured (optional)
 
         Returns:
             Updated category dictionary
@@ -528,9 +703,11 @@ class YNABClient:
                 category_data["note"] = note
             if category_group_id is not None:
                 category_data["category_group_id"] = category_group_id
+            if goal_target is not None:
+                category_data["goal_target"] = int(goal_target * 1000)  # Convert to milliunits
 
             if not category_data:
-                raise ValueError("At least one field (name, note, or category_group_id) must be provided")
+                raise ValueError("At least one field (name, note, category_group_id, or goal_target) must be provided")
 
             data = {"category": category_data}
 
@@ -545,6 +722,8 @@ class YNABClient:
                 "name": cat["name"],
                 "category_group_id": cat.get("category_group_id"),
                 "note": cat.get("note"),
+                "goal_type": cat.get("goal_type"),
+                "goal_target": cat.get("goal_target", 0) / 1000 if cat.get("goal_target") else 0,
                 "budgeted": cat.get("budgeted", 0) / 1000 if cat.get("budgeted") else 0,
                 "activity": cat.get("activity", 0) / 1000 if cat.get("activity") else 0,
                 "balance": cat.get("balance", 0) / 1000 if cat.get("balance") else 0,

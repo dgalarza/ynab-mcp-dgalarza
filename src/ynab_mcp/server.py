@@ -42,6 +42,22 @@ async def get_accounts(budget_id: str) -> str:
 
 
 @mcp.tool()
+async def get_category(budget_id: str, category_id: str) -> str:
+    """Get a single category with full details including goal information.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        category_id: The category ID
+
+    Returns:
+        JSON string with category details including goals, budgeted amounts, activity, and balance
+    """
+    client = get_ynab_client()
+    result = await client.get_category(budget_id, category_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def get_categories(budget_id: str, include_hidden: bool = False) -> str:
     """Get all categories for a budget.
 
@@ -77,22 +93,53 @@ async def get_budget_summary(budget_id: str, month: str) -> str:
 async def get_transactions(
     budget_id: str,
     since_date: str = None,
+    until_date: str = None,
     account_id: str = None,
     category_id: str = None,
+    limit: int = None,
+    page: int = None,
 ) -> str:
-    """Get transactions with optional filtering.
+    """Get transactions with optional filtering and pagination.
 
     Args:
         budget_id: The ID of the budget (use 'last-used' for default budget)
         since_date: Only return transactions on or after this date (YYYY-MM-DD format)
+        until_date: Only return transactions on or before this date (YYYY-MM-DD format)
         account_id: Filter by account ID (optional)
         category_id: Filter by category ID (optional)
+        limit: Number of transactions per page (default: 100, max: 500)
+        page: Page number for pagination (1-indexed, default: 1)
 
     Returns:
-        JSON string with list of transactions
+        JSON string with transactions array and pagination metadata
     """
     client = get_ynab_client()
-    result = await client.get_transactions(budget_id, since_date, account_id, category_id)
+    result = await client.get_transactions(budget_id, since_date, until_date, account_id, category_id, limit, page)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def search_transactions(
+    budget_id: str,
+    search_term: str,
+    since_date: str = None,
+    until_date: str = None,
+    limit: int = None,
+) -> str:
+    """Search for transactions by text in payee name or memo.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        search_term: Text to search for in payee name or memo (case-insensitive)
+        since_date: Only search transactions on or after this date (YYYY-MM-DD format)
+        until_date: Only search transactions on or before this date (YYYY-MM-DD format)
+        limit: Maximum number of transactions to return (default: 100, max: 500)
+
+    Returns:
+        JSON string with matching transactions and count
+    """
+    client = get_ynab_client()
+    result = await client.search_transactions(budget_id, search_term, since_date, until_date, limit)
     return json.dumps(result, indent=2)
 
 
@@ -213,8 +260,9 @@ async def update_category(
     name: str = None,
     note: str = None,
     category_group_id: str = None,
+    goal_target: float = None,
 ) -> str:
-    """Update a category's properties (rename, change note, or move to different group).
+    """Update a category's properties (rename, change note, move to different group, or update goal target).
 
     Args:
         budget_id: The ID of the budget (use 'last-used' for default budget)
@@ -222,12 +270,13 @@ async def update_category(
         name: New name for the category (optional)
         note: New note for the category (optional)
         category_group_id: Move to a different category group ID (optional)
+        goal_target: New goal target amount - only works if category already has a goal configured (optional)
 
     Returns:
         JSON string with the updated category
     """
     client = get_ynab_client()
-    result = await client.update_category(budget_id, category_id, name, note, category_group_id)
+    result = await client.update_category(budget_id, category_id, name, note, category_group_id, goal_target)
     return json.dumps(result, indent=2)
 
 
