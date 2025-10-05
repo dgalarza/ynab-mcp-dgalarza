@@ -154,14 +154,10 @@ class YNABClient:
             List of transaction dictionaries
         """
         try:
-            # Get transactions - SDK uses 'since_date' as positional parameter
+            # Get transactions - SDK only supports get_transactions and get_transactions_by_account
             if account_id:
                 response = self.client.transactions.get_transactions_by_account(
                     budget_id, account_id, since_date
-                )
-            elif category_id:
-                response = self.client.transactions.get_transactions_by_category(
-                    budget_id, category_id, since_date
                 )
             else:
                 response = self.client.transactions.get_transactions(
@@ -170,6 +166,10 @@ class YNABClient:
 
             transactions = []
             for txn in response.data.transactions:
+                # Filter by category_id if provided (SDK doesn't support this natively)
+                if category_id and txn.category_id != category_id:
+                    continue
+
                 transactions.append({
                     "id": txn.id,
                     "date": str(txn.date),
