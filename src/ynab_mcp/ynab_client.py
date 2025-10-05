@@ -97,16 +97,14 @@ class YNABClient:
             Budget summary dictionary
         """
         try:
-            response = self.client.months.get_month(budget_id, month)
-            month_data = response.data.month
-
-            # Get category details from categories endpoint
+            # Get all categories - the SDK provides month-specific data in the categories endpoint
             categories_response = self.client.categories.get_categories(budget_id)
             category_groups = categories_response.data.category_groups
 
             # Calculate totals and collect category details
             total_budgeted = 0
             total_activity = 0
+            total_balance = 0
             categories = []
 
             for group in category_groups:
@@ -117,6 +115,7 @@ class YNABClient:
 
                     total_budgeted += budgeted
                     total_activity += activity
+                    total_balance += balance
 
                     categories.append({
                         "category_group": group.name,
@@ -128,10 +127,9 @@ class YNABClient:
 
             return {
                 "month": month,
-                "income": month_data.income / 1000 if month_data.income else 0,
                 "budgeted": total_budgeted,
                 "activity": total_activity,
-                "to_be_budgeted": month_data.to_be_budgeted / 1000 if month_data.to_be_budgeted else 0,
+                "balance": total_balance,
                 "categories": categories,
             }
         except Exception as e:
@@ -418,10 +416,10 @@ class YNABClient:
             Dictionary with updated from and to categories
         """
         try:
-            # Get current budgeted amounts
-            month_response = self.client.months.get_month(budget_id, month)
+            # Get current budgeted amounts from categories endpoint
+            categories_response = self.client.categories.get_categories(budget_id)
             categories = {}
-            for group in month_response.data.month.categories:
+            for group in categories_response.data.category_groups:
                 for cat in group.categories:
                     if cat.id in [from_category_id, to_category_id]:
                         categories[cat.id] = cat.budgeted
