@@ -2,6 +2,7 @@
 
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import httpx
 from ynab_sdk import YNAB
 
 
@@ -25,6 +26,8 @@ class YNABClient:
 
         # Initialize YNAB SDK client
         self.client = YNAB(access_token)
+        self.access_token = access_token
+        self.api_base_url = "https://api.ynab.com/v1"
 
     async def get_budgets(self) -> List[Dict[str, Any]]:
         """Get all budgets for the authenticated user.
@@ -372,8 +375,7 @@ class YNABClient:
     ) -> Dict[str, Any]:
         """Update the budgeted amount for a category in a specific month.
 
-        NOTE: The ynab-sdk package is read-only and doesn't support budget updates.
-        This would require using the YNAB API directly with requests.
+        Uses direct API calls since ynab-sdk is read-only.
 
         Args:
             budget_id: The budget ID or 'last-used'
@@ -384,10 +386,33 @@ class YNABClient:
         Returns:
             Updated category dictionary
         """
-        raise NotImplementedError(
-            "Budget updates are not supported by the ynab-sdk package. "
-            "The SDK is read-only. To implement this, use the YNAB API directly with requests library."
-        )
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories/{category_id}"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "category": {
+                    "budgeted": int(budgeted * 1000)  # Convert to milliunits
+                }
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.patch(url, json=data, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            cat = result["data"]["category"]
+            return {
+                "id": cat["id"],
+                "name": cat["name"],
+                "budgeted": cat["budgeted"] / 1000 if cat["budgeted"] else 0,
+                "activity": cat["activity"] / 1000 if cat["activity"] else 0,
+                "balance": cat["balance"] / 1000 if cat["balance"] else 0,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to update category budget: {e}")
 
     async def move_category_funds(
         self,
@@ -399,8 +424,7 @@ class YNABClient:
     ) -> Dict[str, Any]:
         """Move funds from one category to another in a specific month.
 
-        NOTE: The ynab-sdk package is read-only and doesn't support budget updates.
-        This would require using the YNAB API directly with requests.
+        Uses direct API calls since ynab-sdk is read-only.
 
         Args:
             budget_id: The budget ID or 'last-used'
@@ -412,7 +436,65 @@ class YNABClient:
         Returns:
             Dictionary with updated from and to categories
         """
-        raise NotImplementedError(
-            "Budget updates are not supported by the ynab-sdk package. "
-            "The SDK is read-only. To implement this, use the YNAB API directly with requests library."
-        )
+        try:
+            # Get current budgeted amounts
+            categories_response = self.client.categories.get_categories(budget_id)
+            categories = {}
+            for group in categories_response.data.category_groups:
+                for cat in group.categories:
+                    if cat.id in [from_category_id, to_category_id]:
+                        categories[cat.id] = {"budgeted": cat.budgeted, "name": cat.name}
+
+            if from_category_id not in categories or to_category_id not in categories:
+                raise ValueError("One or both category IDs not found")
+
+            # Calculate new budgeted amounts
+            from_budgeted = (categories[from_category_id]["budgeted"] / 1000) - amount
+            to_budgeted = (categories[to_category_id]["budgeted"] / 1000) + amount
+
+            # Update both categories using direct API calls
+            base_url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
+
+            async with httpx.AsyncClient() as client:
+                # Update from_category
+                from_response = await client.patch(
+                    f"{base_url}/{from_category_id}",
+                    json={"category": {"budgeted": int(from_budgeted * 1000)}},
+                    headers=headers,
+                )
+                from_response.raise_for_status()
+                from_result = from_response.json()
+
+                # Update to_category
+                to_response = await client.patch(
+                    f"{base_url}/{to_category_id}",
+                    json={"category": {"budgeted": int(to_budgeted * 1000)}},
+                    headers=headers,
+                )
+                to_response.raise_for_status()
+                to_result = to_response.json()
+
+            from_cat = from_result["data"]["category"]
+            to_cat = to_result["data"]["category"]
+
+            return {
+                "from_category": {
+                    "id": from_cat["id"],
+                    "name": from_cat["name"],
+                    "budgeted": from_cat["budgeted"] / 1000 if from_cat["budgeted"] else 0,
+                    "balance": from_cat["balance"] / 1000 if from_cat["balance"] else 0,
+                },
+                "to_category": {
+                    "id": to_cat["id"],
+                    "name": to_cat["name"],
+                    "budgeted": to_cat["budgeted"] / 1000 if to_cat["budgeted"] else 0,
+                    "balance": to_cat["balance"] / 1000 if to_cat["balance"] else 0,
+                },
+                "amount_moved": amount,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to move category funds: {e}")
