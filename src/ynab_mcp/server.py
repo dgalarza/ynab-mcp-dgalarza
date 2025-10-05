@@ -1,9 +1,9 @@
 """YNAB MCP Server - Main server implementation."""
 
 import os
-from typing import Any
-from mcp.server import Server
-from mcp.types import Tool, TextContent
+import json
+import asyncio
+from mcp.server import FastMCP
 from dotenv import load_dotenv
 
 from .ynab_client import YNABClient
@@ -11,80 +11,162 @@ from .ynab_client import YNABClient
 # Load environment variables
 load_dotenv()
 
-# Initialize server
-app = Server("ynab-mcp")
+# Create MCP server
+mcp = FastMCP("YNAB")
 
-# Initialize YNAB client
-ynab_client = YNABClient(os.getenv("YNAB_ACCESS_TOKEN"))
-
-
-@app.list_tools()
-async def list_tools() -> list[Tool]:
-    """List available YNAB tools."""
-    return [
-        Tool(
-            name="get_categories",
-            description="Get all categories for a budget",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "budget_id": {
-                        "type": "string",
-                        "description": "The ID of the budget (use 'last-used' for default budget)",
-                    }
-                },
-                "required": ["budget_id"],
-            },
-        ),
-        Tool(
-            name="get_budget_summary",
-            description="Get budget summary for a specific month",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "budget_id": {
-                        "type": "string",
-                        "description": "The ID of the budget (use 'last-used' for default budget)",
-                    },
-                    "month": {
-                        "type": "string",
-                        "description": "Month in YYYY-MM-DD format (e.g., 2025-01-01)",
-                    },
-                },
-                "required": ["budget_id", "month"],
-            },
-        ),
-    ]
+# YNAB client will be initialized lazily
+ynab_client = None
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: Any) -> list[TextContent]:
-    """Handle tool calls."""
-    try:
-        if name == "get_categories":
-            result = await ynab_client.get_categories(arguments["budget_id"])
-            return [TextContent(type="text", text=str(result))]
-
-        elif name == "get_budget_summary":
-            result = await ynab_client.get_budget_summary(
-                arguments["budget_id"], arguments["month"]
-            )
-            return [TextContent(type="text", text=str(result))]
-
-        else:
-            raise ValueError(f"Unknown tool: {name}")
-
-    except Exception as e:
-        return [TextContent(type="text", text=f"Error: {str(e)}")]
+def get_ynab_client() -> YNABClient:
+    """Get or create YNAB client instance."""
+    global ynab_client
+    if ynab_client is None:
+        ynab_client = YNABClient(os.getenv("YNAB_ACCESS_TOKEN"))
+    return ynab_client
 
 
-async def main():
-    """Run the MCP server."""
-    from mcp.server.stdio import stdio_server
+@mcp.tool()
+async def get_categories(budget_id: str) -> str:
+    """Get all categories for a budget.
 
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options(),
-        )
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+
+    Returns:
+        JSON string with category groups and categories
+    """
+    client = get_ynab_client()
+    result = await client.get_categories(budget_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_budget_summary(budget_id: str, month: str) -> str:
+    """Get budget summary for a specific month.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        month: Month in YYYY-MM-DD format (e.g., 2025-01-01 for January 2025)
+
+    Returns:
+        JSON string with budget summary including income, budgeted amounts, and category details
+    """
+    client = get_ynab_client()
+    result = await client.get_budget_summary(budget_id, month)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_transactions(
+    budget_id: str,
+    since_date: str = None,
+    account_id: str = None,
+    category_id: str = None,
+) -> str:
+    """Get transactions with optional filtering.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        since_date: Only return transactions on or after this date (YYYY-MM-DD format)
+        account_id: Filter by account ID (optional)
+        category_id: Filter by category ID (optional)
+
+    Returns:
+        JSON string with list of transactions
+    """
+    client = get_ynab_client()
+    result = await client.get_transactions(budget_id, since_date, account_id, category_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def create_transaction(
+    budget_id: str,
+    account_id: str,
+    date: str,
+    amount: float,
+    payee_name: str = None,
+    category_id: str = None,
+    memo: str = None,
+    cleared: str = "uncleared",
+    approved: bool = False,
+) -> str:
+    """Create a new transaction.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        account_id: The account ID for this transaction
+        date: Transaction date in YYYY-MM-DD format
+        amount: Transaction amount (positive for inflow, negative for outflow)
+        payee_name: Name of the payee (optional)
+        category_id: Category ID (optional)
+        memo: Transaction memo (optional)
+        cleared: Cleared status - 'cleared', 'uncleared', or 'reconciled' (default: 'uncleared')
+        approved: Whether the transaction is approved (default: False)
+
+    Returns:
+        JSON string with the created transaction
+    """
+    client = get_ynab_client()
+    result = await client.create_transaction(
+        budget_id, account_id, date, amount, payee_name, category_id, memo, cleared, approved
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def update_transaction(
+    budget_id: str,
+    transaction_id: str,
+    account_id: str = None,
+    date: str = None,
+    amount: float = None,
+    payee_name: str = None,
+    category_id: str = None,
+    memo: str = None,
+    cleared: str = None,
+    approved: bool = None,
+) -> str:
+    """Update an existing transaction.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        transaction_id: The ID of the transaction to update
+        account_id: The account ID (optional - keeps existing if not provided)
+        date: Transaction date in YYYY-MM-DD format (optional)
+        amount: Transaction amount (optional)
+        payee_name: Name of the payee (optional)
+        category_id: Category ID (optional)
+        memo: Transaction memo (optional)
+        cleared: Cleared status - 'cleared', 'uncleared', or 'reconciled' (optional)
+        approved: Whether the transaction is approved (optional)
+
+    Returns:
+        JSON string with the updated transaction
+    """
+    client = get_ynab_client()
+    result = await client.update_transaction(
+        budget_id, transaction_id, account_id, date, amount, payee_name, category_id, memo, cleared, approved
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_unapproved_transactions(budget_id: str) -> str:
+    """Get all unapproved transactions that need review.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+
+    Returns:
+        JSON string with list of unapproved transactions
+    """
+    client = get_ynab_client()
+    result = await client.get_unapproved_transactions(budget_id)
+    return json.dumps(result, indent=2)
+
+
+def main():
+    """Entry point for the MCP server."""
+    mcp.run(transport="stdio")

@@ -1,6 +1,7 @@
 """YNAB API client wrapper with authentication."""
 
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 from ynab_sdk import YNAB
 
 
@@ -135,3 +136,223 @@ class YNABClient:
             }
         except Exception as e:
             raise Exception(f"Failed to get budget summary: {e}")
+
+    async def get_transactions(
+        self,
+        budget_id: str,
+        since_date: Optional[str] = None,
+        account_id: Optional[str] = None,
+        category_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get transactions with optional filtering.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            since_date: Only return transactions on or after this date (YYYY-MM-DD)
+            account_id: Filter by account ID
+            category_id: Filter by category ID
+
+        Returns:
+            List of transaction dictionaries
+        """
+        try:
+            # Get transactions
+            if account_id:
+                response = self.client.transactions.get_transactions_by_account(
+                    budget_id, account_id, since_date=since_date
+                )
+            elif category_id:
+                response = self.client.transactions.get_transactions_by_category(
+                    budget_id, category_id, since_date=since_date
+                )
+            else:
+                response = self.client.transactions.get_transactions(
+                    budget_id, since_date=since_date
+                )
+
+            transactions = []
+            for txn in response.data.transactions:
+                transactions.append({
+                    "id": txn.id,
+                    "date": str(txn.date),
+                    "amount": txn.amount / 1000 if txn.amount else 0,
+                    "memo": txn.memo,
+                    "cleared": txn.cleared,
+                    "approved": txn.approved,
+                    "account_id": txn.account_id,
+                    "account_name": txn.account_name,
+                    "payee_id": txn.payee_id,
+                    "payee_name": txn.payee_name,
+                    "category_id": txn.category_id,
+                    "category_name": txn.category_name,
+                    "transfer_account_id": txn.transfer_account_id,
+                    "deleted": txn.deleted,
+                })
+
+            return transactions
+        except Exception as e:
+            raise Exception(f"Failed to get transactions: {e}")
+
+    async def create_transaction(
+        self,
+        budget_id: str,
+        account_id: str,
+        date: str,
+        amount: float,
+        payee_name: Optional[str] = None,
+        category_id: Optional[str] = None,
+        memo: Optional[str] = None,
+        cleared: str = "uncleared",
+        approved: bool = False,
+    ) -> Dict[str, Any]:
+        """Create a new transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            account_id: The account ID
+            date: Transaction date (YYYY-MM-DD)
+            amount: Transaction amount (positive for inflow, negative for outflow)
+            payee_name: Payee name
+            category_id: Category ID
+            memo: Transaction memo
+            cleared: Cleared status ('cleared', 'uncleared', 'reconciled')
+            approved: Whether transaction is approved
+
+        Returns:
+            Created transaction dictionary
+        """
+        try:
+            from ynab_sdk.api.models.requests.transaction import TransactionRequest
+
+            transaction = TransactionRequest(
+                account_id=account_id,
+                date=datetime.strptime(date, "%Y-%m-%d").date(),
+                amount=int(amount * 1000),  # Convert to milliunits
+                payee_name=payee_name,
+                category_id=category_id,
+                memo=memo,
+                cleared=cleared,
+                approved=approved,
+            )
+
+            response = self.client.transactions.create_transaction(budget_id, transaction)
+            txn = response.data.transaction
+
+            return {
+                "id": txn.id,
+                "date": str(txn.date),
+                "amount": txn.amount / 1000 if txn.amount else 0,
+                "memo": txn.memo,
+                "cleared": txn.cleared,
+                "approved": txn.approved,
+                "account_id": txn.account_id,
+                "account_name": txn.account_name,
+                "payee_id": txn.payee_id,
+                "payee_name": txn.payee_name,
+                "category_id": txn.category_id,
+                "category_name": txn.category_name,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to create transaction: {e}")
+
+    async def update_transaction(
+        self,
+        budget_id: str,
+        transaction_id: str,
+        account_id: Optional[str] = None,
+        date: Optional[str] = None,
+        amount: Optional[float] = None,
+        payee_name: Optional[str] = None,
+        category_id: Optional[str] = None,
+        memo: Optional[str] = None,
+        cleared: Optional[str] = None,
+        approved: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Update an existing transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            transaction_id: The transaction ID to update
+            account_id: The account ID
+            date: Transaction date (YYYY-MM-DD)
+            amount: Transaction amount (positive for inflow, negative for outflow)
+            payee_name: Payee name
+            category_id: Category ID
+            memo: Transaction memo
+            cleared: Cleared status ('cleared', 'uncleared', 'reconciled')
+            approved: Whether transaction is approved
+
+        Returns:
+            Updated transaction dictionary
+        """
+        try:
+            from ynab_sdk.api.models.requests.transaction import TransactionRequest
+
+            # First get the existing transaction
+            existing = self.client.transactions.get_transaction_by_id(budget_id, transaction_id)
+            existing_txn = existing.data.transaction
+
+            # Build update with provided values or existing values
+            transaction = TransactionRequest(
+                account_id=account_id if account_id else existing_txn.account_id,
+                date=datetime.strptime(date, "%Y-%m-%d").date() if date else existing_txn.date,
+                amount=int(amount * 1000) if amount is not None else existing_txn.amount,
+                payee_name=payee_name if payee_name is not None else existing_txn.payee_name,
+                category_id=category_id if category_id is not None else existing_txn.category_id,
+                memo=memo if memo is not None else existing_txn.memo,
+                cleared=cleared if cleared else existing_txn.cleared,
+                approved=approved if approved is not None else existing_txn.approved,
+            )
+
+            response = self.client.transactions.update_transaction(budget_id, transaction_id, transaction)
+            txn = response.data.transaction
+
+            return {
+                "id": txn.id,
+                "date": str(txn.date),
+                "amount": txn.amount / 1000 if txn.amount else 0,
+                "memo": txn.memo,
+                "cleared": txn.cleared,
+                "approved": txn.approved,
+                "account_id": txn.account_id,
+                "account_name": txn.account_name,
+                "payee_id": txn.payee_id,
+                "payee_name": txn.payee_name,
+                "category_id": txn.category_id,
+                "category_name": txn.category_name,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to update transaction: {e}")
+
+    async def get_unapproved_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
+        """Get all unapproved transactions.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+
+        Returns:
+            List of unapproved transaction dictionaries
+        """
+        try:
+            response = self.client.transactions.get_transactions(budget_id)
+
+            transactions = []
+            for txn in response.data.transactions:
+                if not txn.approved and not txn.deleted:
+                    transactions.append({
+                        "id": txn.id,
+                        "date": str(txn.date),
+                        "amount": txn.amount / 1000 if txn.amount else 0,
+                        "memo": txn.memo,
+                        "cleared": txn.cleared,
+                        "account_id": txn.account_id,
+                        "account_name": txn.account_name,
+                        "payee_id": txn.payee_id,
+                        "payee_name": txn.payee_name,
+                        "category_id": txn.category_id,
+                        "category_name": txn.category_name,
+                    })
+
+            return transactions
+        except Exception as e:
+            raise Exception(f"Failed to get unapproved transactions: {e}")
