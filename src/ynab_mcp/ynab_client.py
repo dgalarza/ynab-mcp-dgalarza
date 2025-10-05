@@ -92,6 +92,8 @@ class YNABClient:
     async def get_budget_summary(self, budget_id: str, month: str) -> Dict[str, Any]:
         """Get budget summary for a specific month.
 
+        Uses direct API to get month-specific data since SDK doesn't support it.
+
         Args:
             budget_id: The budget ID or 'last-used'
             month: Month in YYYY-MM-DD format
@@ -100,9 +102,18 @@ class YNABClient:
             Budget summary dictionary
         """
         try:
-            # Get all categories - the SDK provides month-specific data in the categories endpoint
-            categories_response = self.client.categories.get_categories(budget_id)
-            category_groups = categories_response.data.category_groups
+            # Use direct API call to get month-specific budget data
+            url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            month_data = result["data"]["month"]
 
             # Calculate totals and collect category details
             total_budgeted = 0
@@ -110,19 +121,19 @@ class YNABClient:
             total_balance = 0
             categories = []
 
-            for group in category_groups:
-                for category in group.categories:
-                    budgeted = category.budgeted / 1000 if category.budgeted else 0
-                    activity = category.activity / 1000 if category.activity else 0
-                    balance = category.balance / 1000 if category.balance else 0
+            for group in month_data["categories"]:
+                for category in group["categories"]:
+                    budgeted = category["budgeted"] / 1000 if category["budgeted"] else 0
+                    activity = category["activity"] / 1000 if category["activity"] else 0
+                    balance = category["balance"] / 1000 if category["balance"] else 0
 
                     total_budgeted += budgeted
                     total_activity += activity
                     total_balance += balance
 
                     categories.append({
-                        "category_group": group.name,
-                        "category_name": category.name,
+                        "category_group": group["name"],
+                        "category_name": category["name"],
                         "budgeted": budgeted,
                         "activity": activity,
                         "balance": balance,
@@ -130,9 +141,11 @@ class YNABClient:
 
             return {
                 "month": month,
+                "income": month_data["income"] / 1000 if month_data.get("income") else 0,
                 "budgeted": total_budgeted,
                 "activity": total_activity,
                 "balance": total_balance,
+                "to_be_budgeted": month_data["to_be_budgeted"] / 1000 if month_data.get("to_be_budgeted") else 0,
                 "categories": categories,
             }
         except Exception as e:
