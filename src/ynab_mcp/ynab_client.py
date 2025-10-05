@@ -154,18 +154,18 @@ class YNABClient:
             List of transaction dictionaries
         """
         try:
-            # Get transactions
+            # Get transactions - SDK uses 'since_date' as positional parameter
             if account_id:
                 response = self.client.transactions.get_transactions_by_account(
-                    budget_id, account_id, since_date=since_date
+                    budget_id, account_id, since_date
                 )
             elif category_id:
                 response = self.client.transactions.get_transactions_by_category(
-                    budget_id, category_id, since_date=since_date
+                    budget_id, category_id, since_date
                 )
             else:
                 response = self.client.transactions.get_transactions(
-                    budget_id, since_date=since_date
+                    budget_id, since_date
                 )
 
             transactions = []
