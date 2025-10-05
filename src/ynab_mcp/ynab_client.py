@@ -156,13 +156,21 @@ class YNABClient:
         try:
             # Get transactions - SDK only supports get_transactions and get_transactions_by_account
             if account_id:
-                response = self.client.transactions.get_transactions_by_account(
-                    budget_id, account_id, since_date
-                )
+                if since_date:
+                    response = self.client.transactions.get_transactions_by_account(
+                        budget_id, account_id, since_date
+                    )
+                else:
+                    response = self.client.transactions.get_transactions_by_account(
+                        budget_id, account_id
+                    )
             else:
-                response = self.client.transactions.get_transactions(
-                    budget_id, since_date
-                )
+                if since_date:
+                    response = self.client.transactions.get_transactions(
+                        budget_id, since_date
+                    )
+                else:
+                    response = self.client.transactions.get_transactions(budget_id)
 
             transactions = []
             for txn in response.data.transactions:
