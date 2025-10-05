@@ -296,35 +296,49 @@ class YNABClient:
             Created transaction dictionary
         """
         try:
-            from ynab_sdk.api.models.requests.transaction import TransactionRequest
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
 
-            transaction = TransactionRequest(
-                account_id=account_id,
-                date=datetime.strptime(date, "%Y-%m-%d").date(),
-                amount=int(amount * 1000),  # Convert to milliunits
-                payee_name=payee_name,
-                category_id=category_id,
-                memo=memo,
-                cleared=cleared,
-                approved=approved,
-            )
+            transaction_data = {
+                "account_id": account_id,
+                "date": date,
+                "amount": int(amount * 1000),  # Convert to milliunits
+                "cleared": cleared,
+                "approved": approved,
+            }
 
-            response = self.client.transactions.create_transaction(budget_id, transaction)
-            txn = response.data.transaction
+            if payee_name is not None:
+                transaction_data["payee_name"] = payee_name
+            if category_id is not None:
+                transaction_data["category_id"] = category_id
+            if memo is not None:
+                transaction_data["memo"] = memo
+
+            data = {"transaction": transaction_data}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=data, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            txn = result["data"]["transaction"]
 
             return {
-                "id": txn.id,
-                "date": str(txn.date),
-                "amount": txn.amount / 1000 if txn.amount else 0,
-                "memo": txn.memo,
-                "cleared": txn.cleared,
-                "approved": txn.approved,
-                "account_id": txn.account_id,
-                "account_name": txn.account_name,
-                "payee_id": txn.payee_id,
-                "payee_name": txn.payee_name,
-                "category_id": txn.category_id,
-                "category_name": txn.category_name,
+                "id": txn["id"],
+                "date": txn["date"],
+                "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                "memo": txn.get("memo"),
+                "cleared": txn.get("cleared"),
+                "approved": txn.get("approved"),
+                "account_id": txn.get("account_id"),
+                "account_name": txn.get("account_name"),
+                "payee_id": txn.get("payee_id"),
+                "payee_name": txn.get("payee_name"),
+                "category_id": txn.get("category_id"),
+                "category_name": txn.get("category_name"),
             }
         except Exception as e:
             raise Exception(f"Failed to create transaction: {e}")
