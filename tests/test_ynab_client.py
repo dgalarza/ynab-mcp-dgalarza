@@ -405,3 +405,152 @@ async def test_compare_spending_by_year_handles_zero_spending(client):
         # Change is 10 / |-10| * 100 = 100%
         assert result["yearly_comparison"][1]["change_from_previous"] == 10.0
         assert result["yearly_comparison"][1]["percent_change"] == pytest.approx(100.0, rel=0.01)
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_transactions(client):
+    """Test get_scheduled_transactions returns formatted scheduled transactions."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock scheduled transactions response
+        scheduled_txns = [
+            {
+                "id": "sched-1",
+                "date_first": "2025-11-01",
+                "date_next": "2025-11-01",
+                "frequency": "monthly",
+                "amount": -100000,  # $100 in milliunits
+                "memo": "Rent",
+                "flag_color": "red",
+                "account_id": "account-123",
+                "account_name": "Checking",
+                "payee_id": "payee-1",
+                "payee_name": "Landlord",
+                "category_id": "cat-123",
+                "category_name": "Rent/Mortgage",
+                "deleted": False,
+            },
+            {
+                "id": "sched-2",
+                "date_first": "2025-11-15",
+                "date_next": "2025-11-15",
+                "frequency": "everyOtherWeek",
+                "amount": 200000,  # $200 paycheck
+                "memo": "Paycheck",
+                "flag_color": None,
+                "account_id": "account-123",
+                "account_name": "Checking",
+                "payee_id": "payee-2",
+                "payee_name": "Employer",
+                "category_id": None,
+                "category_name": None,
+                "deleted": False,
+            }
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"scheduled_transactions": scheduled_txns}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.get_scheduled_transactions("budget-123")
+
+        assert len(result) == 2
+
+        # Check first scheduled transaction
+        assert result[0]["id"] == "sched-1"
+        assert result[0]["frequency"] == "monthly"
+        assert result[0]["amount"] == -100.0
+        assert result[0]["payee_name"] == "Landlord"
+        assert result[0]["memo"] == "Rent"
+
+        # Check second scheduled transaction
+        assert result[1]["id"] == "sched-2"
+        assert result[1]["frequency"] == "everyOtherWeek"
+        assert result[1]["amount"] == 200.0
+        assert result[1]["payee_name"] == "Employer"
+
+
+@pytest.mark.asyncio
+async def test_create_scheduled_transaction(client):
+    """Test create_scheduled_transaction sends correct data."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock successful creation response
+        created_txn = {
+            "id": "sched-new",
+            "date_first": "2025-12-01",
+            "date_next": "2025-12-01",
+            "frequency": "monthly",
+            "amount": -50000,
+            "memo": "Internet Bill",
+            "flag_color": "blue",
+            "account_id": "account-123",
+            "payee_name": "ISP Provider",
+            "category_id": "cat-456",
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"scheduled_transaction": created_txn}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.post.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.create_scheduled_transaction(
+            budget_id="budget-123",
+            account_id="account-123",
+            date_first="2025-12-01",
+            frequency="monthly",
+            amount=-50.0,
+            payee_name="ISP Provider",
+            category_id="cat-456",
+            memo="Internet Bill",
+            flag_color="blue",
+        )
+
+        assert result["id"] == "sched-new"
+        assert result["frequency"] == "monthly"
+        assert result["amount"] == -50.0
+        assert result["payee_name"] == "ISP Provider"
+        assert result["memo"] == "Internet Bill"
+        assert result["flag_color"] == "blue"
+
+        # Verify the API call was made with correct data
+        mock_client_instance.__aenter__.return_value.post.assert_called_once()
+        call_args = mock_client_instance.__aenter__.return_value.post.call_args
+        assert "scheduled_transaction" in call_args.kwargs["json"]
+        txn_data = call_args.kwargs["json"]["scheduled_transaction"]
+        assert txn_data["amount"] == -50000  # Converted to milliunits
+        assert txn_data["frequency"] == "monthly"
+
+
+@pytest.mark.asyncio
+async def test_delete_scheduled_transaction(client):
+    """Test delete_scheduled_transaction sends correct request."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock successful deletion response
+        deleted_txn = {
+            "id": "sched-123",
+            "deleted": True,
+        }
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"scheduled_transaction": deleted_txn}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.delete.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.delete_scheduled_transaction("budget-123", "sched-123")
+
+        assert result["deleted"] == True
+        assert result["scheduled_transaction"]["id"] == "sched-123"
+
+        # Verify DELETE request was made to correct URL
+        mock_client_instance.__aenter__.return_value.delete.assert_called_once()
+        call_args = mock_client_instance.__aenter__.return_value.delete.call_args
+        assert "scheduled_transactions/sched-123" in call_args.args[0]
