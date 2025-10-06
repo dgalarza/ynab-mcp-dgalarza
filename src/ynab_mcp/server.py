@@ -216,6 +216,52 @@ async def update_transaction(
 
 
 @mcp.tool()
+async def get_category_spending_summary(
+    budget_id: str,
+    category_id: str,
+    since_date: str,
+    until_date: str,
+) -> str:
+    """Get spending summary for a category over a date range.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        category_id: The category ID to analyze
+        since_date: Start date (YYYY-MM-DD format)
+        until_date: End date (YYYY-MM-DD format)
+
+    Returns:
+        JSON string with summary including total spent, average per month, transaction count, and monthly breakdown
+    """
+    client = get_ynab_client()
+    result = await client.get_category_spending_summary(budget_id, category_id, since_date, until_date)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def compare_spending_by_year(
+    budget_id: str,
+    category_id: str,
+    start_year: int,
+    num_years: int = 5,
+) -> str:
+    """Compare spending for a category across multiple years.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        category_id: The category ID to analyze
+        start_year: Starting year (e.g., 2020)
+        num_years: Number of years to compare (default: 5)
+
+    Returns:
+        JSON string with year-over-year comparison including totals, changes, and percentage changes
+    """
+    client = get_ynab_client()
+    result = await client.compare_spending_by_year(budget_id, category_id, start_year, num_years)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def get_unapproved_transactions(budget_id: str) -> str:
     """Get all unapproved transactions that need review.
 

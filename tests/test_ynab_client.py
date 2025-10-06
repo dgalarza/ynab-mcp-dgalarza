@@ -271,3 +271,137 @@ async def test_pagination_calculations(client):
         assert result["pagination"]["has_next_page"] == False
         assert result["pagination"]["has_prev_page"] == True
         assert len(result["transactions"]) == 50  # Remaining transactions
+
+
+@pytest.mark.asyncio
+async def test_get_category_spending_summary(client):
+    """Test get_category_spending_summary aggregates correctly."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock transactions over 3 months
+        transactions = [
+            # January 2025
+            {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
+            {"id": "txn-2", "date": "2025-01-20", "amount": -15000, "category_id": "cat-123"},
+            # February 2025
+            {"id": "txn-3", "date": "2025-02-10", "amount": -12000, "category_id": "cat-123"},
+            {"id": "txn-4", "date": "2025-02-25", "amount": -13000, "category_id": "cat-123"},
+            # March 2025
+            {"id": "txn-5", "date": "2025-03-05", "amount": -11000, "category_id": "cat-123"},
+            # Different category (should be excluded)
+            {"id": "txn-6", "date": "2025-01-10", "amount": -5000, "category_id": "cat-999"},
+            # Outside date range (should be excluded)
+            {"id": "txn-7", "date": "2025-04-01", "amount": -20000, "category_id": "cat-123"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"transactions": transactions}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.get_category_spending_summary(
+            "budget-123", "cat-123", "2025-01-01", "2025-03-31"
+        )
+
+        # Total: -10 + -15 + -12 + -13 + -11 = -61
+        assert result["total_spent"] == -61.0
+        assert result["transaction_count"] == 5
+        assert result["num_months"] == 3
+        assert result["average_per_month"] == pytest.approx(-20.333, rel=0.01)
+
+        # Check monthly breakdown
+        assert len(result["monthly_breakdown"]) == 3
+        assert result["monthly_breakdown"][0]["month"] == "2025-01"
+        assert result["monthly_breakdown"][0]["spent"] == -25.0
+        assert result["monthly_breakdown"][1]["month"] == "2025-02"
+        assert result["monthly_breakdown"][1]["spent"] == -25.0
+        assert result["monthly_breakdown"][2]["month"] == "2025-03"
+        assert result["monthly_breakdown"][2]["spent"] == -11.0
+
+
+@pytest.mark.asyncio
+async def test_compare_spending_by_year(client):
+    """Test compare_spending_by_year calculates year-over-year correctly."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock transactions over 3 years
+        transactions = [
+            # 2023: $100 total
+            {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
+            {"id": "txn-2", "date": "2023-09-20", "amount": -50000, "category_id": "cat-123"},
+            # 2024: $150 total (50% increase)
+            {"id": "txn-3", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
+            {"id": "txn-4", "date": "2024-08-25", "amount": -75000, "category_id": "cat-123"},
+            # 2025: $120 total (20% decrease)
+            {"id": "txn-5", "date": "2025-01-05", "amount": -60000, "category_id": "cat-123"},
+            {"id": "txn-6", "date": "2025-06-15", "amount": -60000, "category_id": "cat-123"},
+            # Different category (should be excluded)
+            {"id": "txn-7", "date": "2024-05-10", "amount": -30000, "category_id": "cat-999"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"transactions": transactions}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3)
+
+        assert result["years"] == "2023-2025"
+        assert result["average_per_year"] == pytest.approx(-123.333, rel=0.01)
+
+        # Check yearly comparison
+        assert len(result["yearly_comparison"]) == 3
+
+        # 2023
+        assert result["yearly_comparison"][0]["year"] == "2023"
+        assert result["yearly_comparison"][0]["total_spent"] == -100.0
+        assert "change_from_previous" not in result["yearly_comparison"][0]
+
+        # 2024 (50% increase in spending - more negative)
+        assert result["yearly_comparison"][1]["year"] == "2024"
+        assert result["yearly_comparison"][1]["total_spent"] == -150.0
+        assert result["yearly_comparison"][1]["change_from_previous"] == -50.0
+        # Change is -50 / |-100| * 100 = -50% (spending increased)
+        assert result["yearly_comparison"][1]["percent_change"] == pytest.approx(-50.0, rel=0.01)
+
+        # 2025 (20% decrease in spending - less negative)
+        assert result["yearly_comparison"][2]["year"] == "2025"
+        assert result["yearly_comparison"][2]["total_spent"] == -120.0
+        assert result["yearly_comparison"][2]["change_from_previous"] == 30.0
+        # Change is 30 / |-150| * 100 = 20% (spending decreased)
+        assert result["yearly_comparison"][2]["percent_change"] == pytest.approx(20.0, rel=0.01)
+
+
+@pytest.mark.asyncio
+async def test_compare_spending_by_year_handles_zero_spending(client):
+    """Test compare_spending_by_year handles years with zero spending."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock transactions with gap year
+        transactions = [
+            {"id": "txn-1", "date": "2023-03-15", "amount": -10000, "category_id": "cat-123"},
+            # 2024 has no transactions
+            {"id": "txn-2", "date": "2025-01-20", "amount": -10000, "category_id": "cat-123"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"transactions": transactions}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3)
+
+        # Check that 2024 has zero spending
+        assert result["yearly_comparison"][1]["year"] == "2024"
+        assert result["yearly_comparison"][1]["total_spent"] == 0.0
+
+        # Check that percentage change handles zero correctly
+        # Change is 10 / |-10| * 100 = 100%
+        assert result["yearly_comparison"][1]["change_from_previous"] == 10.0
+        assert result["yearly_comparison"][1]["percent_change"] == pytest.approx(100.0, rel=0.01)

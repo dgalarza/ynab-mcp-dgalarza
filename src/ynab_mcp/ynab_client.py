@@ -585,6 +585,171 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to update transaction: {e}")
 
+    async def get_category_spending_summary(
+        self,
+        budget_id: str,
+        category_id: str,
+        since_date: str,
+        until_date: str,
+    ) -> Dict[str, Any]:
+        """Get spending summary for a category over a date range.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            category_id: The category ID to analyze
+            since_date: Start date (YYYY-MM-DD)
+            until_date: End date (YYYY-MM-DD)
+
+        Returns:
+            Summary with total spent, average, transaction count, and monthly breakdown
+        """
+        try:
+            # Get transactions for the category
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+            params = {"since_date": since_date}
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                result = response.json()
+
+            txn_data = result["data"]["transactions"]
+
+            # Filter and aggregate
+            total_spent = 0
+            transaction_count = 0
+            monthly_totals = {}
+
+            for txn in txn_data:
+                # Filter by category and date range
+                if txn.get("category_id") != category_id:
+                    continue
+                if txn["date"] > until_date:
+                    continue
+
+                amount = txn["amount"] / 1000 if txn.get("amount") else 0
+                total_spent += amount
+                transaction_count += 1
+
+                # Track monthly totals
+                month_key = txn["date"][:7]  # YYYY-MM
+                if month_key not in monthly_totals:
+                    monthly_totals[month_key] = 0
+                monthly_totals[month_key] += amount
+
+            # Calculate average per month
+            num_months = len(monthly_totals) if monthly_totals else 1
+            average_per_month = total_spent / num_months if num_months > 0 else 0
+
+            # Convert monthly totals to sorted list
+            monthly_breakdown = [
+                {"month": month, "spent": amount}
+                for month, amount in sorted(monthly_totals.items())
+            ]
+
+            return {
+                "category_id": category_id,
+                "date_range": {"start": since_date, "end": until_date},
+                "total_spent": total_spent,
+                "transaction_count": transaction_count,
+                "average_per_month": average_per_month,
+                "num_months": num_months,
+                "monthly_breakdown": monthly_breakdown,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get category spending summary: {e}")
+
+    async def compare_spending_by_year(
+        self,
+        budget_id: str,
+        category_id: str,
+        start_year: int,
+        num_years: int = 5,
+    ) -> Dict[str, Any]:
+        """Compare spending for a category across multiple years.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            category_id: The category ID to analyze
+            start_year: Starting year (e.g., 2020)
+            num_years: Number of years to compare (default: 5)
+
+        Returns:
+            Year-over-year comparison with totals and percentage changes
+        """
+        try:
+            # Get all transactions since the start year
+            since_date = f"{start_year}-01-01"
+            end_year = start_year + num_years - 1
+            until_date = f"{end_year}-12-31"
+
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+            params = {"since_date": since_date}
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                result = response.json()
+
+            txn_data = result["data"]["transactions"]
+
+            # Aggregate by year
+            yearly_totals = {}
+            for year in range(start_year, end_year + 1):
+                yearly_totals[str(year)] = 0
+
+            for txn in txn_data:
+                # Filter by category and date range
+                if txn.get("category_id") != category_id:
+                    continue
+                if txn["date"] > until_date:
+                    continue
+
+                year = txn["date"][:4]
+                if year in yearly_totals:
+                    amount = txn["amount"] / 1000 if txn.get("amount") else 0
+                    yearly_totals[year] += amount
+
+            # Calculate year-over-year changes
+            comparisons = []
+            years_sorted = sorted(yearly_totals.keys())
+
+            for i, year in enumerate(years_sorted):
+                year_data = {
+                    "year": year,
+                    "total_spent": yearly_totals[year],
+                }
+
+                if i > 0:
+                    prev_year = years_sorted[i - 1]
+                    prev_total = yearly_totals[prev_year]
+                    change = yearly_totals[year] - prev_total
+
+                    if prev_total != 0:
+                        percent_change = (change / abs(prev_total)) * 100
+                    else:
+                        percent_change = 0 if change == 0 else float('inf')
+
+                    year_data["change_from_previous"] = change
+                    year_data["percent_change"] = percent_change
+
+                comparisons.append(year_data)
+
+            # Calculate overall statistics
+            totals = [yearly_totals[year] for year in years_sorted]
+            average_per_year = sum(totals) / len(totals) if totals else 0
+
+            return {
+                "category_id": category_id,
+                "years": f"{start_year}-{end_year}",
+                "average_per_year": average_per_year,
+                "yearly_comparison": comparisons,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to compare spending by year: {e}")
+
     async def get_unapproved_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
         """Get all unapproved transactions.
 
