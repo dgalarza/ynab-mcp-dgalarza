@@ -53,16 +53,34 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 
 ## Available Tools
 
+### Account Management
+- `get_accounts` - Get all accounts for a budget
+
 ### Category & Budget Management
-- `get_categories` - Get all categories for a budget
+- `get_category` - Get a single category with full details including goal information
+- `get_categories` - Get all categories for a budget (lightweight list)
 - `get_budget_summary` - Get budget summary for a specific month
+- `update_category` - Update category properties (name, note, group, or goal target)
 - `update_category_budget` - Update the budgeted amount for a category in a specific month
 - `move_category_funds` - Move funds from one category to another
 
 ### Transaction Management
-- `get_transactions` - Get transactions with optional filtering by date, account, or category
+- `get_transactions` - Get transactions with pagination and filtering (date range, account, category, limit, page)
+- `search_transactions` - Search transactions by text in payee name or memo
 - `create_transaction` - Create a new transaction
 - `update_transaction` - Update an existing transaction
 - `get_unapproved_transactions` - Get all unapproved transactions that need review
 
-More tools coming soon per the implementation plan in `PLAN.md`!
+## Development
+
+### Running Tests
+
+Install dev dependencies:
+```bash
+uv sync --extra dev
+```
+
+Run tests:
+```bash
+uv run pytest tests/ -v
+```
