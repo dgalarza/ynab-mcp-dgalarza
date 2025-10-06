@@ -311,73 +311,73 @@ class YNABClient:
 
         Args:
             budget_id: The budget ID or 'last-used'
-            month: Month in YYYY-MM-DD format
+            month: Month in YYYY-MM-DD format (e.g., 2025-01-01)
 
         Returns:
             Budget summary dictionary
+
+        Raises:
+            YNABValidationError: If parameters are invalid
+            YNABAPIError: If API request fails
         """
-        try:
-            # Use direct API call to get month-specific budget data
-            url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-            }
+        logger.debug(f"Getting budget summary for {budget_id}, month {month}")
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+        # Validate inputs
+        budget_id = validate_budget_id(budget_id)
+        month = validate_date(month, "month")
 
-            month_data = result["data"]["month"]
+        # Use direct API call to get month-specific budget data
+        url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}"
+        result = await self._make_request_with_retry("get", url)
 
-            # Debug: Check what keys are available
-            if "categories" not in month_data:
-                raise Exception(f"Month data keys: {list(month_data.keys())}")
+        month_data = result["data"]["month"]
 
-            # Get category groups to map category IDs to group names
-            categories_response = self.client.categories.get_categories(budget_id)
-            category_group_map = {}
-            for group in categories_response.data.category_groups:
-                for cat in group.categories:
-                    category_group_map[cat.id] = group.name
+        # Debug: Check what keys are available
+        if "categories" not in month_data:
+            raise YNABAPIError(f"Month data keys: {list(month_data.keys())}")
 
-            # Calculate totals and collect category details
-            total_budgeted = 0
-            total_activity = 0
-            total_balance = 0
-            categories = []
+        # Get category groups to map category IDs to group names
+        categories_response = self.client.categories.get_categories(budget_id)
+        category_group_map = {}
+        for group in categories_response.data.category_groups:
+            for cat in group.categories:
+                category_group_map[cat.id] = group.name
 
-            # Month data has a flat list of categories, not grouped
-            for category in month_data.get("categories", []):
-                budgeted = category["budgeted"] / 1000 if category["budgeted"] else 0
-                activity = category["activity"] / 1000 if category["activity"] else 0
-                balance = category["balance"] / 1000 if category["balance"] else 0
+        # Calculate totals and collect category details
+        total_budgeted = 0
+        total_activity = 0
+        total_balance = 0
+        categories = []
 
-                total_budgeted += budgeted
-                total_activity += activity
-                total_balance += balance
+        # Month data has a flat list of categories, not grouped
+        for category in month_data.get("categories", []):
+            budgeted = category["budgeted"] / MILLIUNITS_FACTOR if category["budgeted"] else 0
+            activity = category["activity"] / MILLIUNITS_FACTOR if category["activity"] else 0
+            balance = category["balance"] / MILLIUNITS_FACTOR if category["balance"] else 0
 
-                category_group_name = category_group_map.get(category["id"], "Unknown")
+            total_budgeted += budgeted
+            total_activity += activity
+            total_balance += balance
 
-                categories.append({
-                    "category_group": category_group_name,
-                    "category_name": category["name"],
-                    "budgeted": budgeted,
-                    "activity": activity,
-                    "balance": balance,
-                })
+            category_group_name = category_group_map.get(category["id"], "Unknown")
 
-            return {
-                "month": month,
-                "income": month_data["income"] / 1000 if month_data.get("income") else 0,
-                "budgeted": total_budgeted,
-                "activity": total_activity,
-                "balance": total_balance,
-                "to_be_budgeted": month_data["to_be_budgeted"] / 1000 if month_data.get("to_be_budgeted") else 0,
-                "categories": categories,
-            }
-        except Exception as e:
-            raise Exception(f"Failed to get budget summary: {e}")
+            categories.append({
+                "category_group": category_group_name,
+                "category_name": category["name"],
+                "budgeted": budgeted,
+                "activity": activity,
+                "balance": balance,
+            })
+
+        return {
+            "month": month,
+            "income": month_data["income"] / MILLIUNITS_FACTOR if month_data.get("income") else 0,
+            "budgeted": total_budgeted,
+            "activity": total_activity,
+            "balance": total_balance,
+            "to_be_budgeted": month_data["to_be_budgeted"] / MILLIUNITS_FACTOR if month_data.get("to_be_budgeted") else 0,
+            "categories": categories,
+        }
 
     async def get_transactions(
         self,
@@ -416,14 +416,7 @@ class YNABClient:
             if account_id:
                 url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}/transactions"
 
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-            }
-
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.get(url, headers=headers, params=params)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("get", url, params=params)
 
             txn_data = result["data"]["transactions"]
 
@@ -514,14 +507,7 @@ class YNABClient:
             if since_date:
                 params["since_date"] = since_date
 
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-            }
-
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers, params=params)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("get", url, params=params)
 
             txn_data = result["data"]["transactions"]
 
@@ -618,10 +604,7 @@ class YNABClient:
 
             data = {"transaction": transaction_data}
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("post", url, json=data)
 
             txn = result["data"]["transaction"]
 
@@ -700,10 +683,7 @@ class YNABClient:
 
             data = {"transaction": transaction_data}
 
-            async with httpx.AsyncClient() as client:
-                response = await client.put(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("put", url, json=data)
 
             txn = result["data"]["transaction"]
 
@@ -807,10 +787,7 @@ class YNABClient:
             params = {"since_date": since_date}
             headers = {"Authorization": f"Bearer {self._access_token}"}
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers, params=params)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("get", url, params=params)
 
             txn_data = result["data"]["transactions"]
 
@@ -898,10 +875,7 @@ class YNABClient:
             params = {"since_date": since_date}
             headers = {"Authorization": f"Bearer {self._access_token}"}
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers, params=params)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("get", url, params=params)
 
             txn_data = result["data"]["transactions"]
 
@@ -983,10 +957,7 @@ class YNABClient:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
             headers = {"Authorization": f"Bearer {self._access_token}"}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("get", url)
 
             scheduled_txns = []
             for txn in result["data"]["scheduled_transactions"]:
@@ -1064,10 +1035,7 @@ class YNABClient:
 
             data = {"scheduled_transaction": scheduled_transaction_data}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("post", url, json=data)
 
             txn = result["data"]["scheduled_transaction"]
 
@@ -1104,10 +1072,7 @@ class YNABClient:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions/{scheduled_transaction_id}"
             headers = {"Authorization": f"Bearer {self._access_token}"}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(url, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("delete", url)
 
             return {
                 "scheduled_transaction": result["data"]["scheduled_transaction"],
@@ -1181,10 +1146,7 @@ class YNABClient:
                 }
             }
 
-            async with httpx.AsyncClient() as client:
-                response = await client.patch(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("patch", url, json=data)
 
             cat = result["data"]["category"]
             return {
@@ -1242,10 +1204,7 @@ class YNABClient:
 
             data = {"category": category_data}
 
-            async with httpx.AsyncClient() as client:
-                response = await client.patch(url, json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            result = await self._make_request_with_retry("patch", url, json=data)
 
             cat = result["data"]["category"]
             return {
@@ -1302,29 +1261,16 @@ class YNABClient:
 
             # Update both categories using direct API calls
             base_url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
 
-            async with httpx.AsyncClient() as client:
-                # Update from_category
-                from_response = await client.patch(
-                    f"{base_url}/{from_category_id}",
-                    json={"category": {"budgeted": int(from_budgeted * 1000)}},
-                    headers=headers,
-                )
-                from_response.raise_for_status()
-                from_result = from_response.json()
+            # Update from_category
+            from_url = f"{base_url}/{from_category_id}"
+            from_data = {"category": {"budgeted": int(from_budgeted * MILLIUNITS_FACTOR)}}
+            from_result = await self._make_request_with_retry("patch", from_url, json=from_data)
 
-                # Update to_category
-                to_response = await client.patch(
-                    f"{base_url}/{to_category_id}",
-                    json={"category": {"budgeted": int(to_budgeted * 1000)}},
-                    headers=headers,
-                )
-                to_response.raise_for_status()
-                to_result = to_response.json()
+            # Update to_category
+            to_url = f"{base_url}/{to_category_id}"
+            to_data = {"category": {"budgeted": int(to_budgeted * MILLIUNITS_FACTOR)}}
+            to_result = await self._make_request_with_retry("patch", to_url, json=to_data)
 
             from_cat = from_result["data"]["category"]
             to_cat = to_result["data"]["category"]

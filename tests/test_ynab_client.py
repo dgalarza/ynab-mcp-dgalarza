@@ -198,10 +198,9 @@ async def test_milliunits_conversion():
 @pytest.mark.asyncio
 async def test_search_transactions_handles_null_fields(client):
     """Test search_transactions handles null payee_name and memo."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock API response with null fields
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {
             "data": {
                 "transactions": [
                     {
@@ -221,11 +220,6 @@ async def test_search_transactions_handles_null_fields(client):
                 ]
             }
         }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
 
         result = await client.search_transactions("budget-123", "groceries")
 
@@ -237,24 +231,19 @@ async def test_search_transactions_handles_null_fields(client):
 @pytest.mark.asyncio
 async def test_pagination_calculations(client):
     """Test pagination metadata calculations."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock 250 transactions
-        transactions = [
-            {
-                "id": f"txn-{i}",
-                "date": "2025-10-01",
-                "amount": -1000,
-            }
-            for i in range(250)
-        ]
+    # Mock 250 transactions
+    transactions = [
+        {
+            "id": f"txn-{i}",
+            "date": "2025-10-01",
+            "amount": -1000,
+        }
+        for i in range(250)
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         # Get page 1 with limit 100
         result = await client.get_transactions("budget-123", limit=100, page=1)
@@ -279,30 +268,25 @@ async def test_pagination_calculations(client):
 @pytest.mark.asyncio
 async def test_get_category_spending_summary(client):
     """Test get_category_spending_summary aggregates correctly."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock transactions over 3 months
-        transactions = [
-            # January 2025
-            {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
-            {"id": "txn-2", "date": "2025-01-20", "amount": -15000, "category_id": "cat-123"},
-            # February 2025
-            {"id": "txn-3", "date": "2025-02-10", "amount": -12000, "category_id": "cat-123"},
-            {"id": "txn-4", "date": "2025-02-25", "amount": -13000, "category_id": "cat-123"},
-            # March 2025
-            {"id": "txn-5", "date": "2025-03-05", "amount": -11000, "category_id": "cat-123"},
-            # Different category (should be excluded)
-            {"id": "txn-6", "date": "2025-01-10", "amount": -5000, "category_id": "cat-999"},
-            # Outside date range (should be excluded)
-            {"id": "txn-7", "date": "2025-04-01", "amount": -20000, "category_id": "cat-123"},
-        ]
+    # Mock transactions over 3 months
+    transactions = [
+        # January 2025
+        {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
+        {"id": "txn-2", "date": "2025-01-20", "amount": -15000, "category_id": "cat-123"},
+        # February 2025
+        {"id": "txn-3", "date": "2025-02-10", "amount": -12000, "category_id": "cat-123"},
+        {"id": "txn-4", "date": "2025-02-25", "amount": -13000, "category_id": "cat-123"},
+        # March 2025
+        {"id": "txn-5", "date": "2025-03-05", "amount": -11000, "category_id": "cat-123"},
+        # Different category (should be excluded)
+        {"id": "txn-6", "date": "2025-01-10", "amount": -5000, "category_id": "cat-999"},
+        # Outside date range (should be excluded)
+        {"id": "txn-7", "date": "2025-04-01", "amount": -20000, "category_id": "cat-123"},
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         result = await client.get_category_spending_summary(
             "budget-123", "cat-123", "2025-01-01", "2025-03-31", include_graph=False
@@ -328,29 +312,24 @@ async def test_get_category_spending_summary(client):
 @pytest.mark.asyncio
 async def test_compare_spending_by_year(client):
     """Test compare_spending_by_year calculates year-over-year correctly."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock transactions over 3 years
-        transactions = [
-            # 2023: $100 total
-            {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
-            {"id": "txn-2", "date": "2023-09-20", "amount": -50000, "category_id": "cat-123"},
-            # 2024: $150 total (50% increase)
-            {"id": "txn-3", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
-            {"id": "txn-4", "date": "2024-08-25", "amount": -75000, "category_id": "cat-123"},
-            # 2025: $120 total (20% decrease)
-            {"id": "txn-5", "date": "2025-01-05", "amount": -60000, "category_id": "cat-123"},
-            {"id": "txn-6", "date": "2025-06-15", "amount": -60000, "category_id": "cat-123"},
-            # Different category (should be excluded)
-            {"id": "txn-7", "date": "2024-05-10", "amount": -30000, "category_id": "cat-999"},
-        ]
+    # Mock transactions over 3 years
+    transactions = [
+        # 2023: $100 total
+        {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
+        {"id": "txn-2", "date": "2023-09-20", "amount": -50000, "category_id": "cat-123"},
+        # 2024: $150 total (50% increase)
+        {"id": "txn-3", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
+        {"id": "txn-4", "date": "2024-08-25", "amount": -75000, "category_id": "cat-123"},
+        # 2025: $120 total (20% decrease)
+        {"id": "txn-5", "date": "2025-01-05", "amount": -60000, "category_id": "cat-123"},
+        {"id": "txn-6", "date": "2025-06-15", "amount": -60000, "category_id": "cat-123"},
+        # Different category (should be excluded)
+        {"id": "txn-7", "date": "2024-05-10", "amount": -30000, "category_id": "cat-999"},
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
 
@@ -384,21 +363,16 @@ async def test_compare_spending_by_year(client):
 @pytest.mark.asyncio
 async def test_compare_spending_by_year_handles_zero_spending(client):
     """Test compare_spending_by_year handles years with zero spending."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock transactions with gap year
-        transactions = [
-            {"id": "txn-1", "date": "2023-03-15", "amount": -10000, "category_id": "cat-123"},
-            # 2024 has no transactions
-            {"id": "txn-2", "date": "2025-01-20", "amount": -10000, "category_id": "cat-123"},
-        ]
+    # Mock transactions with gap year
+    transactions = [
+        {"id": "txn-1", "date": "2023-03-15", "amount": -10000, "category_id": "cat-123"},
+        # 2024 has no transactions
+        {"id": "txn-2", "date": "2025-01-20", "amount": -10000, "category_id": "cat-123"},
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
 
@@ -416,20 +390,15 @@ async def test_compare_spending_by_year_handles_zero_spending(client):
 @pytest.mark.asyncio
 async def test_get_category_spending_summary_with_graph(client):
     """Test get_category_spending_summary includes graph when requested."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock transactions over 2 months
-        transactions = [
-            {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
-            {"id": "txn-2", "date": "2025-02-10", "amount": -20000, "category_id": "cat-123"},
-        ]
+    # Mock transactions over 2 months
+    transactions = [
+        {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
+        {"id": "txn-2", "date": "2025-02-10", "amount": -20000, "category_id": "cat-123"},
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         result = await client.get_category_spending_summary(
             "budget-123", "cat-123", "2025-01-01", "2025-02-28", include_graph=True
@@ -447,20 +416,15 @@ async def test_get_category_spending_summary_with_graph(client):
 @pytest.mark.asyncio
 async def test_compare_spending_by_year_with_graph(client):
     """Test compare_spending_by_year includes graph when requested."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock transactions over 2 years
-        transactions = [
-            {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
-            {"id": "txn-2", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
-        ]
+    # Mock transactions over 2 years
+    transactions = [
+        {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
+        {"id": "txn-2", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"transactions": transactions}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transactions": transactions}}
 
         result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 2, include_graph=True)
 
@@ -476,50 +440,43 @@ async def test_compare_spending_by_year_with_graph(client):
 @pytest.mark.asyncio
 async def test_get_scheduled_transactions(client):
     """Test get_scheduled_transactions returns formatted scheduled transactions."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock scheduled transactions response
-        scheduled_txns = [
-            {
-                "id": "sched-1",
-                "date_first": "2025-11-01",
-                "date_next": "2025-11-01",
-                "frequency": "monthly",
-                "amount": -100000,  # $100 in milliunits
-                "memo": "Rent",
-                "flag_color": "red",
-                "account_id": "account-123",
-                "account_name": "Checking",
-                "payee_id": "payee-1",
-                "payee_name": "Landlord",
-                "category_id": "cat-123",
-                "category_name": "Rent/Mortgage",
-                "deleted": False,
-            },
-            {
-                "id": "sched-2",
-                "date_first": "2025-11-15",
-                "date_next": "2025-11-15",
-                "frequency": "everyOtherWeek",
-                "amount": 200000,  # $200 paycheck
-                "memo": "Paycheck",
-                "flag_color": None,
-                "account_id": "account-123",
-                "account_name": "Checking",
-                "payee_id": "payee-2",
-                "payee_name": "Employer",
-                "category_id": None,
-                "category_name": None,
-                "deleted": False,
-            }
-        ]
+    # Mock scheduled transactions response
+    scheduled_txns = [
+        {
+            "id": "sched-1",
+            "date_first": "2025-11-01",
+            "date_next": "2025-11-01",
+            "frequency": "monthly",
+            "amount": -100000,
+            "memo": "Rent",
+            "flag_color": "red",
+            "account_id": "account-123",
+            "account_name": "Checking",
+            "payee_id": "payee-1",
+            "payee_name": "Landlord",
+            "category_id": "cat-123",
+            "category_name": "Housing",
+        },
+        {
+            "id": "sched-2",
+            "date_first": "2025-10-15",
+            "date_next": "2025-10-29",
+            "frequency": "everyOtherWeek",
+            "amount": 200000,
+            "memo": "Paycheck",
+            "flag_color": None,
+            "account_id": "account-123",
+            "account_name": "Checking",
+            "payee_id": "payee-2",
+            "payee_name": "Employer",
+            "category_id": None,
+            "category_name": None,
+        },
+    ]
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"scheduled_transactions": scheduled_txns}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"scheduled_transactions": scheduled_txns}}
 
         result = await client.get_scheduled_transactions("budget-123")
 
@@ -542,28 +499,23 @@ async def test_get_scheduled_transactions(client):
 @pytest.mark.asyncio
 async def test_create_scheduled_transaction(client):
     """Test create_scheduled_transaction sends correct data."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock successful creation response
-        created_txn = {
-            "id": "sched-new",
-            "date_first": "2025-12-01",
-            "date_next": "2025-12-01",
-            "frequency": "monthly",
-            "amount": -50000,
-            "memo": "Internet Bill",
-            "flag_color": "blue",
-            "account_id": "account-123",
-            "payee_name": "ISP Provider",
-            "category_id": "cat-456",
-        }
+    # Mock successful creation response
+    created_txn = {
+        "id": "sched-new",
+        "date_first": "2025-12-01",
+        "date_next": "2025-12-01",
+        "frequency": "monthly",
+        "amount": -50000,
+        "memo": "Internet Bill",
+        "flag_color": "blue",
+        "account_id": "account-123",
+        "payee_name": "ISP Provider",
+        "category_id": "cat-456",
+    }
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"scheduled_transaction": created_txn}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.post.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"scheduled_transaction": created_txn}}
 
         result = await client.create_scheduled_transaction(
             budget_id="budget-123",
@@ -585,8 +537,8 @@ async def test_create_scheduled_transaction(client):
         assert result["flag_color"] == "blue"
 
         # Verify the API call was made with correct data
-        mock_client_instance.__aenter__.return_value.post.assert_called_once()
-        call_args = mock_client_instance.__aenter__.return_value.post.call_args
+        mock_retry.assert_called_once()
+        call_args = mock_retry.call_args
         assert "scheduled_transaction" in call_args.kwargs["json"]
         txn_data = call_args.kwargs["json"]["scheduled_transaction"]
         assert txn_data["amount"] == -50000  # Converted to milliunits
@@ -596,20 +548,15 @@ async def test_create_scheduled_transaction(client):
 @pytest.mark.asyncio
 async def test_delete_scheduled_transaction(client):
     """Test delete_scheduled_transaction sends correct request."""
-    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
-        # Mock successful deletion response
-        deleted_txn = {
-            "id": "sched-123",
-            "deleted": True,
-        }
+    # Mock successful deletion response
+    deleted_txn = {
+        "id": "sched-123",
+        "deleted": True,
+    }
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": {"scheduled_transaction": deleted_txn}}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.__aenter__.return_value.delete.return_value = mock_response
-        mock_client.return_value = mock_client_instance
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"scheduled_transaction": deleted_txn}}
 
         result = await client.delete_scheduled_transaction("budget-123", "sched-123")
 
@@ -617,6 +564,6 @@ async def test_delete_scheduled_transaction(client):
         assert result["scheduled_transaction"]["id"] == "sched-123"
 
         # Verify DELETE request was made to correct URL
-        mock_client_instance.__aenter__.return_value.delete.assert_called_once()
-        call_args = mock_client_instance.__aenter__.return_value.delete.call_args
-        assert "scheduled_transactions/sched-123" in call_args.args[0]
+        mock_retry.assert_called_once()
+        call_args = mock_retry.call_args
+        assert "sched-123" in call_args.args[1]
