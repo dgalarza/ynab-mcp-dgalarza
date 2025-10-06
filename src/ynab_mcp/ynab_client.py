@@ -2,11 +2,38 @@
 
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import asyncio
+import logging
 import httpx
 from ynab_sdk import YNAB
 from io import StringIO
 import sys
 from termgraph import termgraph as tg
+
+from .exceptions import (
+    YNABAPIError,
+    YNABValidationError,
+    YNABRateLimitError,
+    YNABConnectionError,
+)
+from .validation import (
+    validate_date,
+    validate_budget_id,
+    validate_amount,
+    validate_pagination,
+    validate_frequency,
+    validate_cleared_status,
+)
+
+# Constants
+MILLIUNITS_FACTOR = 1000
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+DEFAULT_TIMEOUT = 30.0
+MAX_RETRIES = 3
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class YNABClient:
@@ -19,18 +46,120 @@ class YNABClient:
             access_token: YNAB Personal Access Token
 
         Raises:
-            ValueError: If access token is not provided
+            YNABValidationError: If access token is not provided
         """
         if not access_token:
-            raise ValueError(
+            raise YNABValidationError(
                 "YNAB_ACCESS_TOKEN environment variable must be set. "
                 "Get your token at: https://app.ynab.com/settings/developer"
             )
 
+        logger.info("Initializing YNAB client")
+
         # Initialize YNAB SDK client
         self.client = YNAB(access_token)
-        self.access_token = access_token
+        self._access_token = access_token
         self.api_base_url = "https://api.ynab.com/v1"
+        self._http_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client with connection pooling.
+
+        Returns:
+            Configured HTTP client instance
+        """
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                timeout=DEFAULT_TIMEOUT,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+            )
+            logger.debug("Created new HTTP client")
+        return self._http_client
+
+    async def close(self):
+        """Close HTTP client and cleanup resources."""
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
+            logger.debug("Closed HTTP client")
+
+    async def _make_request_with_retry(
+        self,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Make API request with retry logic for rate limits.
+
+        Args:
+            method: HTTP method (get, post, put, patch, delete)
+            url: Full URL to request
+            **kwargs: Additional arguments to pass to httpx
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            YNABRateLimitError: If rate limited after retries
+            YNABAPIError: If API returns an error
+            YNABConnectionError: If connection fails
+        """
+        client = await self._get_http_client()
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                logger.debug(f"Making {method.upper()} request to {url} (attempt {attempt + 1}/{MAX_RETRIES})")
+                response = await getattr(client, method)(url, **kwargs)
+                response.raise_for_status()
+                logger.debug(f"Request successful: {response.status_code}")
+                return response.json()
+
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+
+                if status_code == 429:
+                    # Rate limited
+                    retry_after = int(e.response.headers.get("Retry-After", 60))
+                    logger.warning(f"Rate limited (429), retry after {retry_after}s (attempt {attempt + 1}/{MAX_RETRIES})")
+
+                    if attempt < MAX_RETRIES - 1:
+                        await asyncio.sleep(retry_after)
+                        continue
+                    else:
+                        raise YNABRateLimitError(
+                            f"Rate limit exceeded. Retry after {retry_after} seconds.",
+                            retry_after=retry_after,
+                        ) from e
+
+                # Other HTTP errors
+                logger.error(f"HTTP error {status_code}: {e.response.text}")
+                raise YNABAPIError(
+                    f"API request failed: HTTP {status_code}",
+                    status_code=status_code,
+                ) from e
+
+            except httpx.TimeoutException as e:
+                logger.error(f"Request timeout (attempt {attempt + 1}/{MAX_RETRIES})")
+                if attempt < MAX_RETRIES - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise YNABConnectionError(f"Request timeout after {MAX_RETRIES} attempts") from e
+
+            except httpx.NetworkError as e:
+                logger.error(f"Network error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise YNABConnectionError(f"Network error after {MAX_RETRIES} attempts") from e
+
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}", exc_info=True)
+                raise YNABAPIError(f"Unexpected error: {e}") from e
+
+        # Should never reach here, but just in case
+        raise YNABAPIError(f"Request failed after {MAX_RETRIES} attempts")
 
     async def get_budgets(self) -> List[Dict[str, Any]]:
         """Get all budgets for the authenticated user.
@@ -96,40 +225,39 @@ class YNABClient:
 
         Returns:
             Category dictionary with full details
+
+        Raises:
+            YNABValidationError: If parameters are invalid
+            YNABAPIError: If API request fails
         """
-        try:
-            url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
-            headers = {
-                "Authorization": f"Bearer {self.access_token}",
-            }
+        logger.debug(f"Getting category {category_id} for budget {budget_id}")
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+        # Validate inputs
+        budget_id = validate_budget_id(budget_id)
 
-            cat = result["data"]["category"]
+        url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
+        result = await self._make_request_with_retry("get", url)
 
-            return {
-                "id": cat["id"],
-                "name": cat["name"],
-                "category_group_id": cat.get("category_group_id"),
-                "hidden": cat.get("hidden"),
-                "note": cat.get("note"),
-                "budgeted": cat.get("budgeted", 0) / 1000 if cat.get("budgeted") else 0,
-                "activity": cat.get("activity", 0) / 1000 if cat.get("activity") else 0,
-                "balance": cat.get("balance", 0) / 1000 if cat.get("balance") else 0,
-                "goal_type": cat.get("goal_type"),
-                "goal_target": cat.get("goal_target", 0) / 1000 if cat.get("goal_target") else 0,
-                "goal_target_month": cat.get("goal_target_month"),
-                "goal_percentage_complete": cat.get("goal_percentage_complete"),
-                "goal_months_to_budget": cat.get("goal_months_to_budget"),
-                "goal_under_funded": cat.get("goal_under_funded", 0) / 1000 if cat.get("goal_under_funded") else 0,
-                "goal_overall_funded": cat.get("goal_overall_funded", 0) / 1000 if cat.get("goal_overall_funded") else 0,
-                "goal_overall_left": cat.get("goal_overall_left", 0) / 1000 if cat.get("goal_overall_left") else 0,
-            }
-        except Exception as e:
-            raise Exception(f"Failed to get category: {e}")
+        cat = result["data"]["category"]
+
+        return {
+            "id": cat["id"],
+            "name": cat["name"],
+            "category_group_id": cat.get("category_group_id"),
+            "hidden": cat.get("hidden"),
+            "note": cat.get("note"),
+            "budgeted": cat.get("budgeted", 0) / MILLIUNITS_FACTOR if cat.get("budgeted") else 0,
+            "activity": cat.get("activity", 0) / MILLIUNITS_FACTOR if cat.get("activity") else 0,
+            "balance": cat.get("balance", 0) / MILLIUNITS_FACTOR if cat.get("balance") else 0,
+            "goal_type": cat.get("goal_type"),
+            "goal_target": cat.get("goal_target", 0) / MILLIUNITS_FACTOR if cat.get("goal_target") else 0,
+            "goal_target_month": cat.get("goal_target_month"),
+            "goal_percentage_complete": cat.get("goal_percentage_complete"),
+            "goal_months_to_budget": cat.get("goal_months_to_budget"),
+            "goal_under_funded": cat.get("goal_under_funded", 0) / MILLIUNITS_FACTOR if cat.get("goal_under_funded") else 0,
+            "goal_overall_funded": cat.get("goal_overall_funded", 0) / MILLIUNITS_FACTOR if cat.get("goal_overall_funded") else 0,
+            "goal_overall_left": cat.get("goal_overall_left", 0) / MILLIUNITS_FACTOR if cat.get("goal_overall_left") else 0,
+        }
 
     async def get_categories(self, budget_id: str, include_hidden: bool = False) -> List[Dict[str, Any]]:
         """Get all categories for a budget.
@@ -190,7 +318,7 @@ class YNABClient:
             # Use direct API call to get month-specific budget data
             url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
             }
 
             async with httpx.AsyncClient() as client:
@@ -287,7 +415,7 @@ class YNABClient:
                 url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}/transactions"
 
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
             }
 
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -385,7 +513,7 @@ class YNABClient:
                 params["since_date"] = since_date
 
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
             }
 
             async with httpx.AsyncClient() as client:
@@ -467,7 +595,7 @@ class YNABClient:
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
 
@@ -545,7 +673,7 @@ class YNABClient:
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{transaction_id}"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
 
@@ -675,7 +803,7 @@ class YNABClient:
             # Get transactions for the category
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
             params = {"since_date": since_date}
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=headers, params=params)
@@ -766,7 +894,7 @@ class YNABClient:
 
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
             params = {"since_date": since_date}
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=headers, params=params)
@@ -851,7 +979,7 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=headers)
@@ -912,7 +1040,7 @@ class YNABClient:
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
 
@@ -972,7 +1100,7 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions/{scheduled_transaction_id}"
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.delete(url, headers=headers)
@@ -1042,7 +1170,7 @@ class YNABClient:
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories/{category_id}"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
             data = {
@@ -1092,7 +1220,7 @@ class YNABClient:
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
 
@@ -1173,7 +1301,7 @@ class YNABClient:
             # Update both categories using direct API calls
             base_url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
             }
 

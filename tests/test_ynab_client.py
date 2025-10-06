@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.ynab_mcp.ynab_client import YNABClient
+from src.ynab_mcp.exceptions import YNABValidationError
 
 
 @pytest.fixture
@@ -21,13 +22,13 @@ def client(mock_ynab_sdk):
 def test_client_initialization():
     """Test client initializes with access token."""
     client = YNABClient("test_token")
-    assert client.access_token == "test_token"
+    assert client._access_token == "test_token"
     assert client.api_base_url == "https://api.ynab.com/v1"
 
 
 def test_client_initialization_fails_without_token():
     """Test client raises error without access token."""
-    with pytest.raises(ValueError, match="YNAB_ACCESS_TOKEN environment variable must be set"):
+    with pytest.raises(YNABValidationError, match="YNAB_ACCESS_TOKEN environment variable must be set"):
         YNABClient(None)
 
 

@@ -2,11 +2,20 @@
 
 import os
 import json
-import asyncio
+import logging
+from functools import lru_cache
 from mcp.server import FastMCP
 from dotenv import load_dotenv
 
 from .ynab_client import YNABClient
+from .exceptions import YNABValidationError
+
+# Configure logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -14,16 +23,27 @@ load_dotenv()
 # Create MCP server
 mcp = FastMCP("YNAB")
 
-# YNAB client will be initialized lazily
-ynab_client = None
 
-
+@lru_cache(maxsize=1)
 def get_ynab_client() -> YNABClient:
-    """Get or create YNAB client instance."""
-    global ynab_client
-    if ynab_client is None:
-        ynab_client = YNABClient(os.getenv("YNAB_ACCESS_TOKEN"))
-    return ynab_client
+    """Get or create YNAB client instance (cached singleton).
+
+    Returns:
+        YNABClient instance
+
+    Raises:
+        YNABValidationError: If YNAB_ACCESS_TOKEN is not set
+    """
+    logger.info("Getting YNAB client instance")
+    token = os.getenv("YNAB_ACCESS_TOKEN")
+    if not token:
+        error_msg = (
+            "YNAB_ACCESS_TOKEN environment variable is not set. "
+            "Get your token at: https://app.ynab.com/settings/developer"
+        )
+        logger.error(error_msg)
+        raise YNABValidationError(error_msg)
+    return YNABClient(token)
 
 
 @mcp.tool()
