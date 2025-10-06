@@ -266,6 +266,72 @@ async def compare_spending_by_year(
 
 
 @mcp.tool()
+async def get_scheduled_transactions(budget_id: str) -> str:
+    """Get all scheduled transactions.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+
+    Returns:
+        JSON string with list of scheduled transactions
+    """
+    client = get_ynab_client()
+    result = await client.get_scheduled_transactions(budget_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def create_scheduled_transaction(
+    budget_id: str,
+    account_id: str,
+    date_first: str,
+    frequency: str,
+    amount: float,
+    payee_name: str = None,
+    category_id: str = None,
+    memo: str = None,
+    flag_color: str = None,
+) -> str:
+    """Create a scheduled transaction (for future/recurring transactions).
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        account_id: The account ID for this scheduled transaction
+        date_first: The first date the transaction should occur (YYYY-MM-DD format)
+        frequency: Frequency (never, daily, weekly, everyOtherWeek, twiceAMonth, every4Weeks, monthly, everyOtherMonth, every3Months, every4Months, twiceAYear, yearly, everyOtherYear)
+        amount: Transaction amount (positive for inflow, negative for outflow)
+        payee_name: Name of the payee (optional)
+        category_id: Category ID (optional)
+        memo: Transaction memo (optional)
+        flag_color: Flag color - red, orange, yellow, green, blue, purple (optional)
+
+    Returns:
+        JSON string with the created scheduled transaction
+    """
+    client = get_ynab_client()
+    result = await client.create_scheduled_transaction(
+        budget_id, account_id, date_first, frequency, amount, payee_name, category_id, memo, flag_color
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def delete_scheduled_transaction(budget_id: str, scheduled_transaction_id: str) -> str:
+    """Delete a scheduled transaction.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        scheduled_transaction_id: The ID of the scheduled transaction to delete
+
+    Returns:
+        JSON string with confirmation
+    """
+    client = get_ynab_client()
+    result = await client.delete_scheduled_transaction(budget_id, scheduled_transaction_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def get_unapproved_transactions(budget_id: str) -> str:
     """Get all unapproved transactions that need review.
 

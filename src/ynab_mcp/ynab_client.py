@@ -756,6 +756,152 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to compare spending by year: {e}")
 
+    async def get_scheduled_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
+        """Get all scheduled transactions.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+
+        Returns:
+            List of scheduled transaction dictionaries
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            scheduled_txns = []
+            for txn in result["data"]["scheduled_transactions"]:
+                scheduled_txns.append({
+                    "id": txn["id"],
+                    "date_first": txn.get("date_first"),
+                    "date_next": txn.get("date_next"),
+                    "frequency": txn.get("frequency"),
+                    "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                    "memo": txn.get("memo"),
+                    "flag_color": txn.get("flag_color"),
+                    "account_id": txn.get("account_id"),
+                    "account_name": txn.get("account_name"),
+                    "payee_id": txn.get("payee_id"),
+                    "payee_name": txn.get("payee_name"),
+                    "category_id": txn.get("category_id"),
+                    "category_name": txn.get("category_name"),
+                    "deleted": txn.get("deleted"),
+                })
+
+            return scheduled_txns
+        except Exception as e:
+            raise Exception(f"Failed to get scheduled transactions: {e}")
+
+    async def create_scheduled_transaction(
+        self,
+        budget_id: str,
+        account_id: str,
+        date_first: str,
+        frequency: str,
+        amount: float,
+        payee_name: Optional[str] = None,
+        category_id: Optional[str] = None,
+        memo: Optional[str] = None,
+        flag_color: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a scheduled transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            account_id: The account ID
+            date_first: The first date the transaction should occur (YYYY-MM-DD)
+            frequency: Frequency (never, daily, weekly, everyOtherWeek, twiceAMonth, every4Weeks, monthly, everyOtherMonth, every3Months, every4Months, twiceAYear, yearly, everyOtherYear)
+            amount: Transaction amount (positive for inflow, negative for outflow)
+            payee_name: Payee name (optional)
+            category_id: Category ID (optional)
+            memo: Transaction memo (optional)
+            flag_color: Flag color (red, orange, yellow, green, blue, purple, optional)
+
+        Returns:
+            Created scheduled transaction dictionary
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
+
+            scheduled_transaction_data = {
+                "account_id": account_id,
+                "date": date_first,
+                "frequency": frequency,
+                "amount": int(amount * 1000),  # Convert to milliunits
+            }
+
+            if payee_name is not None:
+                scheduled_transaction_data["payee_name"] = payee_name
+            if category_id is not None:
+                scheduled_transaction_data["category_id"] = category_id
+            if memo is not None:
+                scheduled_transaction_data["memo"] = memo
+            if flag_color is not None:
+                scheduled_transaction_data["flag_color"] = flag_color
+
+            data = {"scheduled_transaction": scheduled_transaction_data}
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=data, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            txn = result["data"]["scheduled_transaction"]
+
+            return {
+                "id": txn["id"],
+                "date_first": txn.get("date_first"),
+                "date_next": txn.get("date_next"),
+                "frequency": txn.get("frequency"),
+                "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                "memo": txn.get("memo"),
+                "flag_color": txn.get("flag_color"),
+                "account_id": txn.get("account_id"),
+                "payee_name": txn.get("payee_name"),
+                "category_id": txn.get("category_id"),
+            }
+        except Exception as e:
+            raise Exception(f"Failed to create scheduled transaction: {e}")
+
+    async def delete_scheduled_transaction(
+        self,
+        budget_id: str,
+        scheduled_transaction_id: str,
+    ) -> Dict[str, Any]:
+        """Delete a scheduled transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            scheduled_transaction_id: The scheduled transaction ID to delete
+
+        Returns:
+            Confirmation dictionary
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions/{scheduled_transaction_id}"
+            headers = {"Authorization": f"Bearer {self.access_token}"}
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            return {
+                "scheduled_transaction": result["data"]["scheduled_transaction"],
+                "deleted": True,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to delete scheduled transaction: {e}")
+
     async def get_unapproved_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
         """Get all unapproved transactions.
 
