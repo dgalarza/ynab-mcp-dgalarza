@@ -302,7 +302,7 @@ async def test_get_category_spending_summary(client):
         mock_client.return_value = mock_client_instance
 
         result = await client.get_category_spending_summary(
-            "budget-123", "cat-123", "2025-01-01", "2025-03-31"
+            "budget-123", "cat-123", "2025-01-01", "2025-03-31", include_graph=False
         )
 
         # Total: -10 + -15 + -12 + -13 + -11 = -61
@@ -310,6 +310,7 @@ async def test_get_category_spending_summary(client):
         assert result["transaction_count"] == 5
         assert result["num_months"] == 3
         assert result["average_per_month"] == pytest.approx(-20.333, rel=0.01)
+        assert "graph" not in result  # Graph should not be included
 
         # Check monthly breakdown
         assert len(result["monthly_breakdown"]) == 3
@@ -348,10 +349,11 @@ async def test_compare_spending_by_year(client):
         mock_client_instance.__aenter__.return_value.get.return_value = mock_response
         mock_client.return_value = mock_client_instance
 
-        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3)
+        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
 
         assert result["years"] == "2023-2025"
         assert result["average_per_year"] == pytest.approx(-123.333, rel=0.01)
+        assert "graph" not in result  # Graph should not be included
 
         # Check yearly comparison
         assert len(result["yearly_comparison"]) == 3
@@ -395,16 +397,77 @@ async def test_compare_spending_by_year_handles_zero_spending(client):
         mock_client_instance.__aenter__.return_value.get.return_value = mock_response
         mock_client.return_value = mock_client_instance
 
-        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3)
+        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
 
         # Check that 2024 has zero spending
         assert result["yearly_comparison"][1]["year"] == "2024"
         assert result["yearly_comparison"][1]["total_spent"] == 0.0
+        assert "graph" not in result
 
         # Check that percentage change handles zero correctly
         # Change is 10 / |-10| * 100 = 100%
         assert result["yearly_comparison"][1]["change_from_previous"] == 10.0
         assert result["yearly_comparison"][1]["percent_change"] == pytest.approx(100.0, rel=0.01)
+
+
+@pytest.mark.asyncio
+async def test_get_category_spending_summary_with_graph(client):
+    """Test get_category_spending_summary includes graph when requested."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock transactions over 2 months
+        transactions = [
+            {"id": "txn-1", "date": "2025-01-15", "amount": -10000, "category_id": "cat-123"},
+            {"id": "txn-2", "date": "2025-02-10", "amount": -20000, "category_id": "cat-123"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"transactions": transactions}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.get_category_spending_summary(
+            "budget-123", "cat-123", "2025-01-01", "2025-02-28", include_graph=True
+        )
+
+        # Verify graph is included
+        assert "graph" in result
+        assert isinstance(result["graph"], str)
+        assert len(result["graph"]) > 0
+        # Check that graph contains the month labels
+        assert "2025-01" in result["graph"]
+        assert "2025-02" in result["graph"]
+
+
+@pytest.mark.asyncio
+async def test_compare_spending_by_year_with_graph(client):
+    """Test compare_spending_by_year includes graph when requested."""
+    with patch("src.ynab_mcp.ynab_client.httpx.AsyncClient") as mock_client:
+        # Mock transactions over 2 years
+        transactions = [
+            {"id": "txn-1", "date": "2023-03-15", "amount": -50000, "category_id": "cat-123"},
+            {"id": "txn-2", "date": "2024-02-10", "amount": -75000, "category_id": "cat-123"},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"transactions": transactions}}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value = mock_client_instance
+
+        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 2, include_graph=True)
+
+        # Verify graph is included
+        assert "graph" in result
+        assert isinstance(result["graph"], str)
+        assert len(result["graph"]) > 0
+        # Check that graph contains the year labels
+        assert "2023" in result["graph"]
+        assert "2024" in result["graph"]
 
 
 @pytest.mark.asyncio

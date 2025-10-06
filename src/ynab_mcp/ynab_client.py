@@ -4,6 +4,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import httpx
 from ynab_sdk import YNAB
+from io import StringIO
+import sys
+from termgraph import termgraph as tg
 
 
 class YNABClient:
@@ -591,12 +594,70 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to update transaction: {e}")
 
+    def _generate_graph(self, data: List[tuple], title: str = "") -> str:
+        """Generate a terminal graph using termgraph.
+
+        Args:
+            data: List of (label, value) tuples
+            title: Graph title
+
+        Returns:
+            String containing the terminal graph
+        """
+        if not data:
+            return ""
+
+        # Capture termgraph output
+        old_stdout = sys.stdout
+        sys.stdout = StringIO()
+
+        try:
+            # Prepare data for termgraph
+            labels = [label for label, _ in data]
+            values = [[abs(value)] for _, value in data]
+
+            # Configure termgraph
+            args = {
+                'stacked': False,
+                'width': 50,
+                'format': '{:.2f}',
+                'suffix': '',
+                'no_labels': False,
+                'color': None,
+                'vertical': False,
+                'different_scale': False,
+                'calendar': False,
+                'start_dt': None,
+                'custom_tick': '',
+                'delim': '',
+                'verbose': False,
+                'label_before': False,
+                'histogram': False,
+                'no_values': False,
+            }
+
+            # Print title
+            if title:
+                print(f"\n{title}")
+                print("=" * len(title))
+
+            # Generate graph
+            tg.chart(colors=[], data=values, args=args, labels=labels)
+
+            # Get the output
+            output = sys.stdout.getvalue()
+            return output
+
+        finally:
+            sys.stdout = old_stdout
+
     async def get_category_spending_summary(
         self,
         budget_id: str,
         category_id: str,
         since_date: str,
         until_date: str,
+        include_graph: bool = True,
     ) -> Dict[str, Any]:
         """Get spending summary for a category over a date range.
 
@@ -605,6 +666,7 @@ class YNABClient:
             category_id: The category ID to analyze
             since_date: Start date (YYYY-MM-DD)
             until_date: End date (YYYY-MM-DD)
+            include_graph: Include terminal graph visualization (default: True)
 
         Returns:
             Summary with total spent, average, transaction count, and monthly breakdown
@@ -654,7 +716,7 @@ class YNABClient:
                 for month, amount in sorted(monthly_totals.items())
             ]
 
-            return {
+            result = {
                 "category_id": category_id,
                 "date_range": {"start": since_date, "end": until_date},
                 "total_spent": total_spent,
@@ -663,6 +725,16 @@ class YNABClient:
                 "num_months": num_months,
                 "monthly_breakdown": monthly_breakdown,
             }
+
+            # Add graph if requested
+            if include_graph and monthly_breakdown:
+                graph_data = [(item["month"], item["spent"]) for item in monthly_breakdown]
+                result["graph"] = self._generate_graph(
+                    graph_data,
+                    f"Monthly Spending: {since_date} to {until_date}"
+                )
+
+            return result
         except Exception as e:
             raise Exception(f"Failed to get category spending summary: {e}")
 
@@ -672,6 +744,7 @@ class YNABClient:
         category_id: str,
         start_year: int,
         num_years: int = 5,
+        include_graph: bool = True,
     ) -> Dict[str, Any]:
         """Compare spending for a category across multiple years.
 
@@ -680,6 +753,7 @@ class YNABClient:
             category_id: The category ID to analyze
             start_year: Starting year (e.g., 2020)
             num_years: Number of years to compare (default: 5)
+            include_graph: Include terminal graph visualization (default: True)
 
         Returns:
             Year-over-year comparison with totals and percentage changes
@@ -747,12 +821,22 @@ class YNABClient:
             totals = [yearly_totals[year] for year in years_sorted]
             average_per_year = sum(totals) / len(totals) if totals else 0
 
-            return {
+            result_data = {
                 "category_id": category_id,
                 "years": f"{start_year}-{end_year}",
                 "average_per_year": average_per_year,
                 "yearly_comparison": comparisons,
             }
+
+            # Add graph if requested
+            if include_graph and yearly_totals:
+                graph_data = [(year, yearly_totals[year]) for year in years_sorted]
+                result_data["graph"] = self._generate_graph(
+                    graph_data,
+                    f"Year-over-Year Comparison: {start_year}-{end_year}"
+                )
+
+            return result_data
         except Exception as e:
             raise Exception(f"Failed to compare spending by year: {e}")
 

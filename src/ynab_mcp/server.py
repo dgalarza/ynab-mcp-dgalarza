@@ -225,6 +225,7 @@ async def get_category_spending_summary(
     category_id: str,
     since_date: str,
     until_date: str,
+    include_graph: bool = True,
 ) -> str:
     """Get spending summary for a category over a date range.
 
@@ -233,12 +234,13 @@ async def get_category_spending_summary(
         category_id: The category ID to analyze
         since_date: Start date (YYYY-MM-DD format)
         until_date: End date (YYYY-MM-DD format)
+        include_graph: Include terminal graph visualization (default: True)
 
     Returns:
-        JSON string with summary including total spent, average per month, transaction count, and monthly breakdown
+        JSON string with summary including total spent, average per month, transaction count, monthly breakdown, and optional graph
     """
     client = get_ynab_client()
-    result = await client.get_category_spending_summary(budget_id, category_id, since_date, until_date)
+    result = await client.get_category_spending_summary(budget_id, category_id, since_date, until_date, include_graph)
     return json.dumps(result, indent=2)
 
 
@@ -248,6 +250,7 @@ async def compare_spending_by_year(
     category_id: str,
     start_year: int,
     num_years: int = 5,
+    include_graph: bool = True,
 ) -> str:
     """Compare spending for a category across multiple years.
 
@@ -256,12 +259,13 @@ async def compare_spending_by_year(
         category_id: The category ID to analyze
         start_year: Starting year (e.g., 2020)
         num_years: Number of years to compare (default: 5)
+        include_graph: Include terminal graph visualization (default: True)
 
     Returns:
-        JSON string with year-over-year comparison including totals, changes, and percentage changes
+        JSON string with year-over-year comparison including totals, changes, percentage changes, and optional graph
     """
     client = get_ynab_client()
-    result = await client.compare_spending_by_year(budget_id, category_id, start_year, num_years)
+    result = await client.compare_spending_by_year(budget_id, category_id, start_year, num_years, include_graph)
     return json.dumps(result, indent=2)
 
 

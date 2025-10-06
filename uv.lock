@@ -719,6 +719,18 @@ wheels = [
 ]
 
 [[package]]
+name = "termgraph"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e4/67/c747867725f3f30545bda7206da1b430af1f27ea1252b612ce5b5a551666/termgraph-0.7.3.tar.gz", hash = "sha256:c82818120f1ede390fa5eb431180d42447e7947c62f8a21990eedd75039a05cd", size = 462683, upload-time = "2025-09-18T15:37:34.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/07/4458d374701eb996d4797eb6c14396925c3f35723861c4401d340533f11d/termgraph-0.7.3-py3-none-any.whl", hash = "sha256:bbbd4381b8cd6afd38d136f6a71f87fb7b91c101b25925261a385c9a554be9c1", size = 18191, upload-time = "2025-09-18T15:37:33.549Z" },
+]
+
+[[package]]
 name = "tomli"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -809,6 +821,7 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "python-dotenv" },
+    { name = "termgraph" },
     { name = "ynab-sdk" },
 ]
 
@@ -825,6 +838,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "termgraph", specifier = ">=0.5.3" },
     { name = "ynab-sdk", specifier = ">=0.1.0" },
 ]
 provides-extras = ["dev"]
