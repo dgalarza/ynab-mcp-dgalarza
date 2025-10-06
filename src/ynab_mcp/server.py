@@ -1,5 +1,7 @@
 """YNAB MCP Server - Main server implementation."""
 
+from __future__ import annotations
+
 import os
 import json
 import logging
@@ -443,6 +445,41 @@ async def move_category_funds(
     client = get_ynab_client()
     result = await client.move_category_funds(budget_id, month, from_category_id, to_category_id, amount)
     return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def health_check() -> str:
+    """Check server health and YNAB API connectivity.
+
+    This tool performs a lightweight API call to verify that:
+    - The MCP server is running
+    - The YNAB access token is valid
+    - The YNAB API is reachable
+
+    Returns:
+        JSON string with health status and connection info
+    """
+    try:
+        logger.info("Running health check")
+        client = get_ynab_client()
+
+        # Make a lightweight API call to verify connectivity
+        budgets = await client.get_budgets()
+
+        return json.dumps({
+            "status": "healthy",
+            "api_connected": True,
+            "budgets_count": len(budgets),
+            "message": "YNAB MCP server is running and API is accessible"
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"Health check failed: {e}", exc_info=True)
+        return json.dumps({
+            "status": "unhealthy",
+            "api_connected": False,
+            "error": str(e),
+            "message": "YNAB MCP server is running but API is not accessible"
+        }, indent=2)
 
 
 def main():

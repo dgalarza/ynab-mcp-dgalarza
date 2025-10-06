@@ -1,5 +1,7 @@
 """Tests for YNAB client."""
 
+from __future__ import annotations
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from src.ynab_mcp.ynab_client import YNABClient

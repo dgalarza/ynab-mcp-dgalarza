@@ -1,5 +1,7 @@
 """Input validation utilities for YNAB MCP."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Optional
 from .exceptions import YNABValidationError

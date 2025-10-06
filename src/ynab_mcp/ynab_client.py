@@ -1,5 +1,7 @@
 """YNAB API client wrapper with authentication."""
 
+from __future__ import annotations
+
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import asyncio

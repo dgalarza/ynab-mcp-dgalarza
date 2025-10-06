@@ -1,5 +1,7 @@
 """YNAB MCP Server - MCP server for YNAB integration."""
 
+from __future__ import annotations
+
 from .ynab_client import YNABClient
 from .server import main
 from .exceptions import (
