@@ -269,6 +269,10 @@ class YNABClient:
 
         Returns:
             Dictionary with transactions, pagination info, and total count
+
+        Note:
+            For large date ranges (>1 year), consider using get_category_spending_summary
+            or compare_spending_by_year instead to avoid timeouts and reduce context usage.
         """
         try:
             # Use direct API call for better filtering support
@@ -283,7 +287,7 @@ class YNABClient:
                 "Authorization": f"Bearer {self.access_token}",
             }
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 result = response.json()
@@ -345,8 +349,10 @@ class YNABClient:
                     "has_prev_page": page_num > 1,
                 }
             }
+        except httpx.HTTPStatusError as e:
+            raise Exception(f"Failed to get transactions: HTTP {e.response.status_code} - {e.response.text}")
         except Exception as e:
-            raise Exception(f"Failed to get transactions: {e}")
+            raise Exception(f"Failed to get transactions: {type(e).__name__}: {e}")
 
     async def search_transactions(
         self,

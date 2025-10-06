@@ -112,6 +112,10 @@ async def get_transactions(
 
     Returns:
         JSON string with transactions array and pagination metadata
+
+    Note:
+        For large date ranges (>1 year), use get_category_spending_summary or
+        compare_spending_by_year instead to avoid timeouts and reduce context usage.
     """
     client = get_ynab_client()
     result = await client.get_transactions(budget_id, since_date, until_date, account_id, category_id, limit, page)
