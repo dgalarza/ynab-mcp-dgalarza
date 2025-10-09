@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+
 from .exceptions import YNABValidationError
 
 
@@ -78,8 +78,8 @@ def validate_amount(amount: float, param_name: str = "amount") -> float:
 
 
 def validate_pagination(
-    limit: Optional[int] = None,
-    page: Optional[int] = None,
+    limit: int | None = None,
+    page: int | None = None,
     max_limit: int = 500,
     default_limit: int = 100,
 ) -> tuple[int, int]:

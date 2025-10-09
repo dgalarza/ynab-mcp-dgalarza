@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class YNABError(Exception):
     """Base exception for YNAB MCP errors."""
@@ -14,7 +12,7 @@ class YNABError(Exception):
 class YNABAPIError(YNABError):
     """Raised when YNAB API returns an error."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
+    def __init__(self, message: str, status_code: int | None = None):
         """Initialize API error.
 
         Args:
@@ -34,7 +32,7 @@ class YNABValidationError(YNABError):
 class YNABRateLimitError(YNABAPIError):
     """Raised when rate limit is exceeded."""
 
-    def __init__(self, message: str, retry_after: Optional[int] = None):
+    def __init__(self, message: str, retry_after: int | None = None):
         """Initialize rate limit error.
 
         Args:
