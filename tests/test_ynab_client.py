@@ -567,3 +567,289 @@ async def test_delete_scheduled_transaction(client):
         mock_retry.assert_called_once()
         call_args = mock_retry.call_args
         assert "sched-123" in call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_get_transaction(client):
+    """Test get_transaction returns formatted transaction with subtransactions."""
+    # Mock transaction response with subtransactions
+    txn_data = {
+        "id": "txn-123",
+        "date": "2025-10-06",
+        "amount": -80000,  # -$80 in milliunits
+        "memo": "Shopping",
+        "cleared": "cleared",
+        "approved": True,
+        "account_id": "account-123",
+        "account_name": "Checking",
+        "payee_id": "payee-1",
+        "payee_name": "Target",
+        "category_id": None,  # Null for split transactions
+        "category_name": None,
+        "transfer_account_id": None,
+        "subtransactions": [
+            {
+                "id": "sub-1",
+                "amount": -50000,
+                "memo": "Groceries",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-123",
+                "category_name": "Food",
+            },
+            {
+                "id": "sub-2",
+                "amount": -30000,
+                "memo": "Household",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-456",
+                "category_name": "Household Items",
+            },
+        ],
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transaction": txn_data}}
+
+        result = await client.get_transaction("budget-123", "txn-123")
+
+        # Check main transaction details
+        assert result["id"] == "txn-123"
+        assert result["date"] == "2025-10-06"
+        assert result["amount"] == -80.0  # Converted from milliunits
+        assert result["memo"] == "Shopping"
+        assert result["payee_name"] == "Target"
+        assert result["category_id"] is None  # Split transactions have null category_id
+
+        # Check subtransactions
+        assert result["subtransactions"] is not None
+        assert len(result["subtransactions"]) == 2
+
+        # Check first subtransaction
+        assert result["subtransactions"][0]["id"] == "sub-1"
+        assert result["subtransactions"][0]["amount"] == -50.0
+        assert result["subtransactions"][0]["memo"] == "Groceries"
+        assert result["subtransactions"][0]["category_name"] == "Food"
+
+        # Check second subtransaction
+        assert result["subtransactions"][1]["id"] == "sub-2"
+        assert result["subtransactions"][1]["amount"] == -30.0
+        assert result["subtransactions"][1]["memo"] == "Household"
+        assert result["subtransactions"][1]["category_name"] == "Household Items"
+
+        # Verify the API call was made to correct URL
+        mock_retry.assert_called_once()
+        call_args = mock_retry.call_args
+        assert "txn-123" in call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_get_transaction_without_subtransactions(client):
+    """Test get_transaction for regular transactions without splits."""
+    # Mock regular transaction response (no subtransactions)
+    txn_data = {
+        "id": "txn-456",
+        "date": "2025-10-05",
+        "amount": -25000,
+        "memo": "Coffee",
+        "cleared": "uncleared",
+        "approved": False,
+        "account_id": "account-123",
+        "account_name": "Checking",
+        "payee_id": "payee-2",
+        "payee_name": "Cafe",
+        "category_id": "cat-789",
+        "category_name": "Dining Out",
+        "transfer_account_id": None,
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transaction": txn_data}}
+
+        result = await client.get_transaction("budget-123", "txn-456")
+
+        # Check transaction details
+        assert result["id"] == "txn-456"
+        assert result["amount"] == -25.0
+        assert result["category_name"] == "Dining Out"
+        assert result["subtransactions"] is None  # No subtransactions for regular transactions
+
+
+@pytest.mark.asyncio
+async def test_create_split_transaction(client):
+    """Test create_split_transaction sends correct data and handles response."""
+    # Mock successful creation response
+    created_txn = {
+        "id": "txn-new",
+        "date": "2025-10-06",
+        "amount": -80000,
+        "memo": "Shopping",
+        "cleared": "uncleared",
+        "approved": False,
+        "account_id": "account-123",
+        "account_name": "Checking",
+        "payee_id": None,
+        "payee_name": "Target",
+        "category_id": None,  # Null for split transactions
+        "category_name": None,
+        "subtransactions": [
+            {
+                "id": "sub-1",
+                "amount": -50000,
+                "memo": "Food",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-123",
+                "category_name": "Groceries",
+            },
+            {
+                "id": "sub-2",
+                "amount": -30000,
+                "memo": "Supplies",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-456",
+                "category_name": "Household",
+            },
+        ],
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transaction": created_txn}}
+
+        subtransactions = [
+            {"amount": -50.0, "category_id": "cat-123", "memo": "Food"},
+            {"amount": -30.0, "category_id": "cat-456", "memo": "Supplies"},
+        ]
+
+        result = await client.create_split_transaction(
+            budget_id="budget-123",
+            account_id="account-123",
+            date="2025-10-06",
+            amount=-80.0,
+            subtransactions=subtransactions,
+            payee_name="Target",
+            memo="Shopping",
+            cleared="uncleared",
+            approved=False,
+        )
+
+        # Check main transaction
+        assert result["id"] == "txn-new"
+        assert result["amount"] == -80.0
+        assert result["payee_name"] == "Target"
+        assert result["category_id"] is None
+
+        # Check subtransactions
+        assert len(result["subtransactions"]) == 2
+        assert result["subtransactions"][0]["amount"] == -50.0
+        assert result["subtransactions"][0]["category_name"] == "Groceries"
+        assert result["subtransactions"][1]["amount"] == -30.0
+        assert result["subtransactions"][1]["category_name"] == "Household"
+
+        # Verify the API call was made with correct data
+        mock_retry.assert_called_once()
+        call_args = mock_retry.call_args
+        assert "transaction" in call_args.kwargs["json"]
+        txn_data = call_args.kwargs["json"]["transaction"]
+        assert txn_data["amount"] == -80000  # Converted to milliunits
+        assert txn_data["category_id"] is None  # Must be null for split transactions
+        assert len(txn_data["subtransactions"]) == 2
+        assert txn_data["subtransactions"][0]["amount"] == -50000
+        assert txn_data["subtransactions"][1]["amount"] == -30000
+
+
+@pytest.mark.asyncio
+async def test_prepare_split_for_matching(client):
+    """Test prepare_split_for_matching fetches original and creates split."""
+    # Mock original transaction
+    original_txn = {
+        "id": "txn-original",
+        "date": "2025-10-06",
+        "amount": -80000,
+        "memo": "Shopping",
+        "cleared": "cleared",
+        "approved": True,
+        "account_id": "account-123",
+        "account_name": "Checking",
+        "payee_id": "payee-1",
+        "payee_name": "Target",
+        "category_id": "cat-999",
+        "category_name": "Uncategorized",
+        "transfer_account_id": None,
+        "subtransactions": None,
+    }
+
+    # Mock created split transaction
+    created_split = {
+        "id": "txn-split",
+        "date": "2025-10-06",
+        "amount": -80000,
+        "memo": "Shopping",
+        "cleared": "cleared",
+        "approved": False,  # Created as unapproved
+        "account_id": "account-123",
+        "account_name": "Checking",
+        "payee_id": None,
+        "payee_name": "Target",
+        "category_id": None,
+        "category_name": None,
+        "subtransactions": [
+            {
+                "id": "sub-1",
+                "amount": -50000,
+                "memo": "Food",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-123",
+                "category_name": "Groceries",
+            },
+            {
+                "id": "sub-2",
+                "amount": -30000,
+                "memo": "Supplies",
+                "payee_id": None,
+                "payee_name": "Target",
+                "category_id": "cat-456",
+                "category_name": "Household",
+            },
+        ],
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API responses: first call for get_transaction, second for create_split_transaction
+        mock_retry.side_effect = [
+            {"data": {"transaction": original_txn}},
+            {"data": {"transaction": created_split}},
+        ]
+
+        subtransactions = [
+            {"amount": -50.0, "category_id": "cat-123", "memo": "Food"},
+            {"amount": -30.0, "category_id": "cat-456", "memo": "Supplies"},
+        ]
+
+        result = await client.prepare_split_for_matching(
+            budget_id="budget-123", transaction_id="txn-original", subtransactions=subtransactions
+        )
+
+        # Check original transaction info
+        assert result["original_transaction"]["id"] == "txn-original"
+        assert result["original_transaction"]["amount"] == -80.0
+        assert result["original_transaction"]["payee_name"] == "Target"
+
+        # Check new split transaction
+        assert result["new_split_transaction"]["id"] == "txn-split"
+        assert result["new_split_transaction"]["approved"] is False  # Unapproved for matching
+        assert result["new_split_transaction"]["amount"] == -80.0
+        assert len(result["new_split_transaction"]["subtransactions"]) == 2
+
+        # Check instructions are provided
+        assert "instructions" in result
+        assert "match" in result["instructions"].lower()
+
+        # Verify two API calls were made (get + create)
+        assert mock_retry.call_count == 2

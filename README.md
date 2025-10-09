@@ -68,11 +68,16 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 - `move_category_funds` - Move funds from one category to another
 
 ### Transaction Management
+- `get_transaction` - Get a single transaction with full details including subtransactions
 - `get_transactions` - Get transactions with pagination and filtering (date range, account, category, limit, page)
 - `search_transactions` - Search transactions by text in payee name or memo
 - `create_transaction` - Create a new transaction
-- `update_transaction` - Update an existing transaction
+- `update_transaction` - Update an existing transaction (⚠️ cannot add/modify splits on existing transactions)
 - `get_unapproved_transactions` - Get all unapproved transactions that need review
+
+### Split Transaction Management
+- `create_split_transaction` - Create a new transaction split across multiple categories
+- `prepare_split_for_matching` - Split an existing imported transaction by creating a matching split for manual reconciliation in YNAB UI
 
 ### Scheduled Transactions
 - `get_scheduled_transactions` - List all scheduled transactions
@@ -96,6 +101,34 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 - Input validation on all parameters
 - Timeout configuration (30s default)
 - Milliunits conversion handled automatically
+
+### Split Transaction Support
+Split transactions allow you to allocate a single transaction across multiple categories (e.g., splitting a grocery store purchase into "Groceries" and "Household Items").
+
+**Creating New Split Transactions:**
+```bash
+create_split_transaction(
+  budget_id="last-used",
+  account_id="account-id",
+  date="2025-10-06",
+  amount=-80.00,
+  subtransactions='[{"amount": -50.00, "category_id": "groceries-id", "memo": "Food"}, {"amount": -30.00, "category_id": "household-id", "memo": "Supplies"}]'
+)
+```
+
+**Splitting Existing Imported Transactions:**
+Due to YNAB API limitations, you cannot directly modify an existing transaction to add splits. Instead, use `prepare_split_for_matching`:
+
+1. Call `prepare_split_for_matching` with the existing transaction ID and desired splits
+2. The tool fetches the original transaction details and creates a new **unapproved** split transaction
+3. Go to YNAB (web or mobile) and manually match the two transactions
+4. YNAB merges them into one split transaction, preserving the bank import connection
+
+**Important Limitations:**
+- Cannot add or update subtransactions on existing transactions via the API
+- Cannot convert a regular transaction into a split transaction directly
+- Once created, subtransactions cannot be modified via the API
+- Split transaction dates and amounts cannot be changed after creation
 
 ### Analytics & Visualization
 - Server-side spending aggregation to reduce context usage

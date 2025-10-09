@@ -233,6 +233,13 @@ async def update_transaction(
 
     Returns:
         JSON string with the updated transaction
+
+    Important Limitations:
+        - Cannot add or update subtransactions on existing transactions
+        - Cannot convert a regular transaction into a split transaction
+        - If the transaction is already a split, its category_id cannot be changed
+        - Split transaction dates and amounts cannot be modified
+        - To create a split transaction, use create_split_transaction instead
     """
     client = get_ynab_client()
     result = await client.update_transaction(
@@ -444,6 +451,129 @@ async def move_category_funds(
     """
     client = get_ynab_client()
     result = await client.move_category_funds(budget_id, month, from_category_id, to_category_id, amount)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def get_transaction(budget_id: str, transaction_id: str) -> str:
+    """Get a single transaction with all details including subtransactions.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        transaction_id: The ID of the transaction to retrieve
+
+    Returns:
+        JSON string with the transaction details including subtransactions if it's a split transaction
+    """
+    client = get_ynab_client()
+    result = await client.get_transaction(budget_id, transaction_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def create_split_transaction(
+    budget_id: str,
+    account_id: str,
+    date: str,
+    amount: float,
+    subtransactions: str,
+    payee_name: str = None,
+    memo: str = None,
+    cleared: str = "uncleared",
+    approved: bool = False,
+) -> str:
+    """Create a NEW split transaction with multiple category allocations.
+
+    This tool creates a brand new transaction that is split across multiple categories.
+    It CANNOT be used to add splits to an existing transaction - the YNAB API does not support that.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        account_id: The account ID for this transaction
+        date: Transaction date in YYYY-MM-DD format
+        amount: Total transaction amount (positive for inflow, negative for outflow)
+        subtransactions: JSON string containing array of subtransactions. Each subtransaction should have:
+            - amount (required): The subtransaction amount
+            - category_id (optional): Category ID for this split
+            - payee_id (optional): Payee ID for this split
+            - memo (optional): Memo for this split
+            Example: '[{"amount": -50.00, "category_id": "cat1", "memo": "Groceries"}, {"amount": -30.00, "category_id": "cat2", "memo": "Gas"}]'
+        payee_name: Name of the payee for the main transaction (optional)
+        memo: Transaction memo (optional)
+        cleared: Cleared status - 'cleared', 'uncleared', or 'reconciled' (default: 'uncleared')
+        approved: Whether the transaction is approved (default: False)
+
+    Returns:
+        JSON string with the created split transaction
+
+    Important Notes:
+        - This creates a NEW transaction only - cannot modify existing transactions to add splits
+        - The sum of subtransaction amounts should equal the total transaction amount
+        - Once created, subtransactions cannot be modified via the API (YNAB limitation)
+        - To "split" an existing transaction, you must delete it and create a new split transaction
+    """
+    client = get_ynab_client()
+
+    # Parse subtransactions JSON string
+    try:
+        subtransactions_list = json.loads(subtransactions)
+    except json.JSONDecodeError as e:
+        raise YNABValidationError(f"Invalid subtransactions JSON: {e}")
+
+    result = await client.create_split_transaction(
+        budget_id, account_id, date, amount, subtransactions_list, payee_name, memo, cleared, approved
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def prepare_split_for_matching(
+    budget_id: str,
+    transaction_id: str,
+    subtransactions: str,
+) -> str:
+    """Prepare a split transaction to match with an existing imported transaction.
+
+    This tool fetches an existing transaction's details and creates a new UNAPPROVED split
+    transaction with the same date, amount, account, and payee. You can then manually match
+    them together in the YNAB web or mobile UI.
+
+    Use this when you want to split an imported bank transaction - the new split will be
+    created as unapproved so you can match it with the original in YNAB's UI.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        transaction_id: The ID of the existing transaction to split
+        subtransactions: JSON string containing array of subtransactions. Each subtransaction should have:
+            - amount (required): The subtransaction amount
+            - category_id (optional): Category ID for this split
+            - payee_id (optional): Payee ID for this split
+            - memo (optional): Memo for this split
+            Example: '[{"amount": -50.00, "category_id": "cat1", "memo": "Groceries"}, {"amount": -30.00, "category_id": "cat2", "memo": "Gas"}]'
+
+    Returns:
+        JSON string with original transaction details, new split transaction details, and instructions
+
+    Workflow:
+        1. This tool fetches the existing transaction details
+        2. Creates a new unapproved split transaction with those details
+        3. You manually match them in the YNAB UI
+        4. YNAB merges them into one split transaction
+
+    Note:
+        - The new split is created as UNAPPROVED for manual matching
+        - The sum of subtransaction amounts should equal the original transaction amount
+        - After matching in YNAB UI, the original transaction will become a split transaction
+    """
+    client = get_ynab_client()
+
+    # Parse subtransactions JSON string
+    try:
+        subtransactions_list = json.loads(subtransactions)
+    except json.JSONDecodeError as e:
+        raise YNABValidationError(f"Invalid subtransactions JSON: {e}")
+
+    result = await client.prepare_split_for_matching(budget_id, transaction_id, subtransactions_list)
     return json.dumps(result, indent=2)
 
 

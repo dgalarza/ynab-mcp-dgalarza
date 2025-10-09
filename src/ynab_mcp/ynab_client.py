@@ -1292,3 +1292,227 @@ class YNABClient:
             }
         except Exception as e:
             raise Exception(f"Failed to move category funds: {e}")
+
+    async def get_transaction(
+        self,
+        budget_id: str,
+        transaction_id: str,
+    ) -> Dict[str, Any]:
+        """Get a single transaction with all details including subtransactions.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            transaction_id: The transaction ID to retrieve
+
+        Returns:
+            Transaction dictionary with full details
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{transaction_id}"
+            result = await self._make_request_with_retry("get", url)
+
+            txn = result["data"]["transaction"]
+
+            # Format subtransactions if present
+            subtransactions = []
+            if txn.get("subtransactions"):
+                for sub in txn["subtransactions"]:
+                    subtransactions.append({
+                        "id": sub.get("id"),
+                        "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
+                        "memo": sub.get("memo"),
+                        "payee_id": sub.get("payee_id"),
+                        "payee_name": sub.get("payee_name"),
+                        "category_id": sub.get("category_id"),
+                        "category_name": sub.get("category_name"),
+                    })
+
+            return {
+                "id": txn["id"],
+                "date": txn["date"],
+                "amount": txn["amount"] / MILLIUNITS_FACTOR if txn.get("amount") else 0,
+                "memo": txn.get("memo"),
+                "cleared": txn.get("cleared"),
+                "approved": txn.get("approved"),
+                "account_id": txn.get("account_id"),
+                "account_name": txn.get("account_name"),
+                "payee_id": txn.get("payee_id"),
+                "payee_name": txn.get("payee_name"),
+                "category_id": txn.get("category_id"),
+                "category_name": txn.get("category_name"),
+                "transfer_account_id": txn.get("transfer_account_id"),
+                "subtransactions": subtransactions if subtransactions else None,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get transaction: {e}")
+
+    async def create_split_transaction(
+        self,
+        budget_id: str,
+        account_id: str,
+        date: str,
+        amount: float,
+        subtransactions: List[Dict[str, Any]],
+        payee_name: Optional[str] = None,
+        memo: Optional[str] = None,
+        cleared: str = "uncleared",
+        approved: bool = False,
+    ) -> Dict[str, Any]:
+        """Create a new split transaction with subtransactions.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            account_id: The account ID for this transaction
+            date: Transaction date in YYYY-MM-DD format
+            amount: Total transaction amount (positive for inflow, negative for outflow)
+            subtransactions: List of subtransaction dictionaries, each containing:
+                - amount (float, required): Subtransaction amount
+                - category_id (str, optional): Category ID for this subtransaction
+                - payee_id (str, optional): Payee ID for this subtransaction
+                - memo (str, optional): Memo for this subtransaction
+            payee_name: Name of the payee for the main transaction (optional)
+            memo: Transaction memo (optional)
+            cleared: Cleared status - 'cleared', 'uncleared', or 'reconciled' (default: 'uncleared')
+            approved: Whether the transaction is approved (default: False)
+
+        Returns:
+            JSON string with the created split transaction
+
+        Note:
+            - The sum of subtransaction amounts should equal the total transaction amount
+            - category_id on the main transaction will be set to null automatically for split transactions
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
+
+            # Format subtransactions
+            formatted_subtransactions = []
+            for sub in subtransactions:
+                sub_data = {
+                    "amount": int(sub["amount"] * MILLIUNITS_FACTOR),
+                }
+                if sub.get("category_id"):
+                    sub_data["category_id"] = sub["category_id"]
+                if sub.get("payee_id"):
+                    sub_data["payee_id"] = sub["payee_id"]
+                if sub.get("memo"):
+                    sub_data["memo"] = sub["memo"]
+                formatted_subtransactions.append(sub_data)
+
+            # Build transaction data with subtransactions
+            transaction_data = {
+                "account_id": account_id,
+                "date": date,
+                "amount": int(amount * MILLIUNITS_FACTOR),
+                "category_id": None,  # Must be null for split transactions
+                "subtransactions": formatted_subtransactions,
+                "cleared": cleared,
+                "approved": approved,
+            }
+
+            if payee_name is not None:
+                transaction_data["payee_name"] = payee_name
+            if memo is not None:
+                transaction_data["memo"] = memo
+
+            data = {"transaction": transaction_data}
+
+            result = await self._make_request_with_retry("post", url, json=data)
+
+            txn = result["data"]["transaction"]
+
+            # Format subtransactions in response
+            subtransactions_response = []
+            if txn.get("subtransactions"):
+                for sub in txn["subtransactions"]:
+                    subtransactions_response.append({
+                        "id": sub.get("id"),
+                        "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
+                        "memo": sub.get("memo"),
+                        "payee_id": sub.get("payee_id"),
+                        "payee_name": sub.get("payee_name"),
+                        "category_id": sub.get("category_id"),
+                        "category_name": sub.get("category_name"),
+                    })
+
+            return {
+                "id": txn["id"],
+                "date": txn["date"],
+                "amount": txn["amount"] / MILLIUNITS_FACTOR if txn.get("amount") else 0,
+                "memo": txn.get("memo"),
+                "cleared": txn.get("cleared"),
+                "approved": txn.get("approved"),
+                "account_id": txn.get("account_id"),
+                "account_name": txn.get("account_name"),
+                "payee_id": txn.get("payee_id"),
+                "payee_name": txn.get("payee_name"),
+                "category_id": txn.get("category_id"),
+                "category_name": txn.get("category_name"),
+                "subtransactions": subtransactions_response,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to create split transaction: {e}")
+
+    async def prepare_split_for_matching(
+        self,
+        budget_id: str,
+        transaction_id: str,
+        subtransactions: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Prepare a split transaction to match with an existing imported transaction.
+
+        This fetches an existing transaction's details and creates a new unapproved split
+        transaction with the same date, amount, account, and payee. You can then manually
+        match them in the YNAB UI.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            transaction_id: The ID of the existing transaction to base the split on
+            subtransactions: List of subtransaction dictionaries, each containing:
+                - amount (float, required): Subtransaction amount
+                - category_id (str, optional): Category ID for this subtransaction
+                - payee_id (str, optional): Payee ID for this subtransaction
+                - memo (str, optional): Memo for this subtransaction
+
+        Returns:
+            Dictionary with original transaction details and newly created split transaction
+
+        Note:
+            - The new split transaction is created as unapproved
+            - You must manually match them in the YNAB UI
+            - The sum of subtransaction amounts should equal the original transaction amount
+        """
+        try:
+            # Fetch the original transaction details
+            original = await self.get_transaction(budget_id, transaction_id)
+
+            # Create a new split transaction with the same details but unapproved
+            new_split = await self.create_split_transaction(
+                budget_id=budget_id,
+                account_id=original["account_id"],
+                date=original["date"],
+                amount=original["amount"],
+                subtransactions=subtransactions,
+                payee_name=original.get("payee_name"),
+                memo=original.get("memo"),
+                cleared=original.get("cleared", "uncleared"),
+                approved=False,  # Always create as unapproved for manual matching
+            )
+
+            return {
+                "original_transaction": {
+                    "id": original["id"],
+                    "date": original["date"],
+                    "amount": original["amount"],
+                    "payee_name": original.get("payee_name"),
+                    "account_name": original.get("account_name"),
+                },
+                "new_split_transaction": new_split,
+                "instructions": (
+                    "A new unapproved split transaction has been created. "
+                    "Go to YNAB and manually match these two transactions together. "
+                    "Look for the match indicator in the YNAB UI."
+                ),
+            }
+        except Exception as e:
+            raise Exception(f"Failed to prepare split for matching: {e}")
