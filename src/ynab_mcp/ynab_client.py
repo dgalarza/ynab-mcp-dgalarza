@@ -2,29 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List
-from datetime import datetime
 import asyncio
 import logging
-import httpx
-from ynab_sdk import YNAB
-from io import StringIO
 import sys
+from io import StringIO
+from typing import Any
+
+import httpx
 from termgraph import termgraph as tg
+from ynab_sdk import YNAB
 
 from .exceptions import (
     YNABAPIError,
-    YNABValidationError,
-    YNABRateLimitError,
     YNABConnectionError,
+    YNABRateLimitError,
+    YNABValidationError,
 )
 from .validation import (
-    validate_date,
     validate_budget_id,
-    validate_amount,
-    validate_pagination,
-    validate_frequency,
-    validate_cleared_status,
+    validate_date,
 )
 
 # Constants
@@ -41,7 +37,7 @@ logger = logging.getLogger(__name__)
 class YNABClient:
     """Wrapper around YNAB SDK for MCP server."""
 
-    def __init__(self, access_token: Optional[str]):
+    def __init__(self, access_token: str | None):
         """Initialize YNAB client with access token.
 
         Args:
@@ -62,7 +58,7 @@ class YNABClient:
         self.client = YNAB(access_token)
         self._access_token = access_token
         self.api_base_url = "https://api.ynab.com/v1"
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client with connection pooling.
@@ -90,7 +86,7 @@ class YNABClient:
         method: str,
         url: str,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make API request with retry logic for rate limits.
 
         Args:
@@ -110,7 +106,9 @@ class YNABClient:
 
         for attempt in range(MAX_RETRIES):
             try:
-                logger.debug(f"Making {method.upper()} request to {url} (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.debug(
+                    f"Making {method.upper()} request to {url} (attempt {attempt + 1}/{MAX_RETRIES})"
+                )
                 response = await getattr(client, method)(url, **kwargs)
                 response.raise_for_status()
                 logger.debug(f"Request successful: {response.status_code}")
@@ -122,7 +120,9 @@ class YNABClient:
                 if status_code == 429:
                     # Rate limited
                     retry_after = int(e.response.headers.get("Retry-After", 60))
-                    logger.warning(f"Rate limited (429), retry after {retry_after}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                    logger.warning(
+                        f"Rate limited (429), retry after {retry_after}s (attempt {attempt + 1}/{MAX_RETRIES})"
+                    )
 
                     if attempt < MAX_RETRIES - 1:
                         await asyncio.sleep(retry_after)
@@ -143,7 +143,7 @@ class YNABClient:
             except httpx.TimeoutException as e:
                 logger.error(f"Request timeout (attempt {attempt + 1}/{MAX_RETRIES})")
                 if attempt < MAX_RETRIES - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = 2**attempt  # Exponential backoff
                     await asyncio.sleep(wait_time)
                     continue
                 raise YNABConnectionError(f"Request timeout after {MAX_RETRIES} attempts") from e
@@ -151,7 +151,7 @@ class YNABClient:
             except httpx.NetworkError as e:
                 logger.error(f"Network error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
                 if attempt < MAX_RETRIES - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = 2**attempt  # Exponential backoff
                     await asyncio.sleep(wait_time)
                     continue
                 raise YNABConnectionError(f"Network error after {MAX_RETRIES} attempts") from e
@@ -163,7 +163,7 @@ class YNABClient:
         # Should never reach here, but just in case
         raise YNABAPIError(f"Request failed after {MAX_RETRIES} attempts")
 
-    async def get_budgets(self) -> List[Dict[str, Any]]:
+    async def get_budgets(self) -> list[dict[str, Any]]:
         """Get all budgets for the authenticated user.
 
         Returns:
@@ -173,21 +173,25 @@ class YNABClient:
             response = self.client.budgets.get_budgets()
             budgets = []
             for budget in response.data.budgets:
-                budgets.append({
-                    "id": budget.id,
-                    "name": budget.name,
-                    "last_modified_on": str(budget.last_modified_on) if budget.last_modified_on else None,
-                    "currency_format": {
-                        "iso_code": budget.currency_format.iso_code,
-                        "example_format": budget.currency_format.example_format,
-                        "currency_symbol": budget.currency_format.currency_symbol,
+                budgets.append(
+                    {
+                        "id": budget.id,
+                        "name": budget.name,
+                        "last_modified_on": str(budget.last_modified_on)
+                        if budget.last_modified_on
+                        else None,
+                        "currency_format": {
+                            "iso_code": budget.currency_format.iso_code,
+                            "example_format": budget.currency_format.example_format,
+                            "currency_symbol": budget.currency_format.currency_symbol,
+                        },
                     }
-                })
+                )
             return budgets
         except Exception as e:
-            raise Exception(f"Failed to get budgets: {e}")
+            raise Exception(f"Failed to get budgets: {e}") from e
 
-    async def get_accounts(self, budget_id: str) -> List[Dict[str, Any]]:
+    async def get_accounts(self, budget_id: str) -> list[dict[str, Any]]:
         """Get all accounts for a budget.
 
         Args:
@@ -205,20 +209,22 @@ class YNABClient:
                 if account.deleted:
                     continue
 
-                accounts.append({
-                    "id": account.id,
-                    "name": account.name,
-                    "type": account.type,
-                    "on_budget": account.on_budget,
-                    "closed": account.closed,
-                    "balance": account.balance / 1000 if account.balance else 0,
-                })
+                accounts.append(
+                    {
+                        "id": account.id,
+                        "name": account.name,
+                        "type": account.type,
+                        "on_budget": account.on_budget,
+                        "closed": account.closed,
+                        "balance": account.balance / 1000 if account.balance else 0,
+                    }
+                )
 
             return accounts
         except Exception as e:
-            raise Exception(f"Failed to get accounts: {e}")
+            raise Exception(f"Failed to get accounts: {e}") from e
 
-    async def get_category(self, budget_id: str, category_id: str) -> Dict[str, Any]:
+    async def get_category(self, budget_id: str, category_id: str) -> dict[str, Any]:
         """Get a single category with all details including goal information.
 
         Args:
@@ -252,16 +258,26 @@ class YNABClient:
             "activity": cat.get("activity", 0) / MILLIUNITS_FACTOR if cat.get("activity") else 0,
             "balance": cat.get("balance", 0) / MILLIUNITS_FACTOR if cat.get("balance") else 0,
             "goal_type": cat.get("goal_type"),
-            "goal_target": cat.get("goal_target", 0) / MILLIUNITS_FACTOR if cat.get("goal_target") else 0,
+            "goal_target": cat.get("goal_target", 0) / MILLIUNITS_FACTOR
+            if cat.get("goal_target")
+            else 0,
             "goal_target_month": cat.get("goal_target_month"),
             "goal_percentage_complete": cat.get("goal_percentage_complete"),
             "goal_months_to_budget": cat.get("goal_months_to_budget"),
-            "goal_under_funded": cat.get("goal_under_funded", 0) / MILLIUNITS_FACTOR if cat.get("goal_under_funded") else 0,
-            "goal_overall_funded": cat.get("goal_overall_funded", 0) / MILLIUNITS_FACTOR if cat.get("goal_overall_funded") else 0,
-            "goal_overall_left": cat.get("goal_overall_left", 0) / MILLIUNITS_FACTOR if cat.get("goal_overall_left") else 0,
+            "goal_under_funded": cat.get("goal_under_funded", 0) / MILLIUNITS_FACTOR
+            if cat.get("goal_under_funded")
+            else 0,
+            "goal_overall_funded": cat.get("goal_overall_funded", 0) / MILLIUNITS_FACTOR
+            if cat.get("goal_overall_funded")
+            else 0,
+            "goal_overall_left": cat.get("goal_overall_left", 0) / MILLIUNITS_FACTOR
+            if cat.get("goal_overall_left")
+            else 0,
         }
 
-    async def get_categories(self, budget_id: str, include_hidden: bool = False) -> List[Dict[str, Any]]:
+    async def get_categories(
+        self, budget_id: str, include_hidden: bool = False
+    ) -> list[dict[str, Any]]:
         """Get all categories for a budget.
 
         Args:
@@ -282,29 +298,33 @@ class YNABClient:
                     if not include_hidden and (category.hidden or category.deleted):
                         continue
 
-                    categories.append({
-                        "id": category.id,
-                        "name": category.name,
-                        "balance": category.balance / 1000 if category.balance else 0,
-                        "hidden": category.hidden,
-                    })
+                    categories.append(
+                        {
+                            "id": category.id,
+                            "name": category.name,
+                            "balance": category.balance / 1000 if category.balance else 0,
+                            "hidden": category.hidden,
+                        }
+                    )
 
                 # Skip hidden groups unless requested, and skip empty groups
                 if (not include_hidden and group.hidden) or not categories:
                     continue
 
-                category_groups.append({
-                    "id": group.id,
-                    "name": group.name,
-                    "hidden": group.hidden,
-                    "categories": categories,
-                })
+                category_groups.append(
+                    {
+                        "id": group.id,
+                        "name": group.name,
+                        "hidden": group.hidden,
+                        "categories": categories,
+                    }
+                )
 
             return category_groups
         except Exception as e:
-            raise Exception(f"Failed to get categories: {e}")
+            raise Exception(f"Failed to get categories: {e}") from e
 
-    async def get_budget_summary(self, budget_id: str, month: str) -> Dict[str, Any]:
+    async def get_budget_summary(self, budget_id: str, month: str) -> dict[str, Any]:
         """Get budget summary for a specific month.
 
         Uses direct API to get month-specific data since SDK doesn't support it.
@@ -361,13 +381,15 @@ class YNABClient:
 
             category_group_name = category_group_map.get(category["id"], "Unknown")
 
-            categories.append({
-                "category_group": category_group_name,
-                "category_name": category["name"],
-                "budgeted": budgeted,
-                "activity": activity,
-                "balance": balance,
-            })
+            categories.append(
+                {
+                    "category_group": category_group_name,
+                    "category_name": category["name"],
+                    "budgeted": budgeted,
+                    "activity": activity,
+                    "balance": balance,
+                }
+            )
 
         return {
             "month": month,
@@ -375,20 +397,22 @@ class YNABClient:
             "budgeted": total_budgeted,
             "activity": total_activity,
             "balance": total_balance,
-            "to_be_budgeted": month_data["to_be_budgeted"] / MILLIUNITS_FACTOR if month_data.get("to_be_budgeted") else 0,
+            "to_be_budgeted": month_data["to_be_budgeted"] / MILLIUNITS_FACTOR
+            if month_data.get("to_be_budgeted")
+            else 0,
             "categories": categories,
         }
 
     async def get_transactions(
         self,
         budget_id: str,
-        since_date: Optional[str] = None,
-        until_date: Optional[str] = None,
-        account_id: Optional[str] = None,
-        category_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        since_date: str | None = None,
+        until_date: str | None = None,
+        account_id: str | None = None,
+        category_id: str | None = None,
+        limit: int | None = None,
+        page: int | None = None,
+    ) -> dict[str, Any]:
         """Get transactions with optional filtering and pagination.
 
         Args:
@@ -447,22 +471,24 @@ class YNABClient:
 
             transactions = []
             for txn in paginated_txns:
-                transactions.append({
-                    "id": txn["id"],
-                    "date": txn["date"],
-                    "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
-                    "memo": txn.get("memo"),
-                    "cleared": txn.get("cleared"),
-                    "approved": txn.get("approved"),
-                    "account_id": txn.get("account_id"),
-                    "account_name": txn.get("account_name"),
-                    "payee_id": txn.get("payee_id"),
-                    "payee_name": txn.get("payee_name"),
-                    "category_id": txn.get("category_id"),
-                    "category_name": txn.get("category_name"),
-                    "transfer_account_id": txn.get("transfer_account_id"),
-                    "deleted": txn.get("deleted"),
-                })
+                transactions.append(
+                    {
+                        "id": txn["id"],
+                        "date": txn["date"],
+                        "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                        "memo": txn.get("memo"),
+                        "cleared": txn.get("cleared"),
+                        "approved": txn.get("approved"),
+                        "account_id": txn.get("account_id"),
+                        "account_name": txn.get("account_name"),
+                        "payee_id": txn.get("payee_id"),
+                        "payee_name": txn.get("payee_name"),
+                        "category_id": txn.get("category_id"),
+                        "category_name": txn.get("category_name"),
+                        "transfer_account_id": txn.get("transfer_account_id"),
+                        "deleted": txn.get("deleted"),
+                    }
+                )
 
             return {
                 "transactions": transactions,
@@ -473,21 +499,23 @@ class YNABClient:
                     "total_pages": total_pages,
                     "has_next_page": page_num < total_pages,
                     "has_prev_page": page_num > 1,
-                }
+                },
             }
         except httpx.HTTPStatusError as e:
-            raise Exception(f"Failed to get transactions: HTTP {e.response.status_code} - {e.response.text}")
+            raise Exception(
+                f"Failed to get transactions: HTTP {e.response.status_code} - {e.response.text}"
+            ) from e
         except Exception as e:
-            raise Exception(f"Failed to get transactions: {type(e).__name__}: {e}")
+            raise Exception(f"Failed to get transactions: {type(e).__name__}: {e}") from e
 
     async def search_transactions(
         self,
         budget_id: str,
         search_term: str,
-        since_date: Optional[str] = None,
-        until_date: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        since_date: str | None = None,
+        until_date: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Search transactions by text matching in payee name or memo.
 
         Args:
@@ -525,20 +553,22 @@ class YNABClient:
                 memo = (txn.get("memo") or "").lower()
 
                 if search_lower in payee_name or search_lower in memo:
-                    matching_transactions.append({
-                        "id": txn["id"],
-                        "date": txn["date"],
-                        "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
-                        "memo": txn.get("memo"),
-                        "cleared": txn.get("cleared"),
-                        "approved": txn.get("approved"),
-                        "account_id": txn.get("account_id"),
-                        "account_name": txn.get("account_name"),
-                        "payee_id": txn.get("payee_id"),
-                        "payee_name": txn.get("payee_name"),
-                        "category_id": txn.get("category_id"),
-                        "category_name": txn.get("category_name"),
-                    })
+                    matching_transactions.append(
+                        {
+                            "id": txn["id"],
+                            "date": txn["date"],
+                            "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                            "memo": txn.get("memo"),
+                            "cleared": txn.get("cleared"),
+                            "approved": txn.get("approved"),
+                            "account_id": txn.get("account_id"),
+                            "account_name": txn.get("account_name"),
+                            "payee_id": txn.get("payee_id"),
+                            "payee_name": txn.get("payee_name"),
+                            "category_id": txn.get("category_id"),
+                            "category_name": txn.get("category_name"),
+                        }
+                    )
 
                     # Apply limit if specified
                     if limit and len(matching_transactions) >= limit:
@@ -550,7 +580,7 @@ class YNABClient:
                 "count": len(matching_transactions),
             }
         except Exception as e:
-            raise Exception(f"Failed to search transactions: {e}")
+            raise Exception(f"Failed to search transactions: {e}") from e
 
     async def create_transaction(
         self,
@@ -558,12 +588,12 @@ class YNABClient:
         account_id: str,
         date: str,
         amount: float,
-        payee_name: Optional[str] = None,
-        category_id: Optional[str] = None,
-        memo: Optional[str] = None,
+        payee_name: str | None = None,
+        category_id: str | None = None,
+        memo: str | None = None,
         cleared: str = "uncleared",
         approved: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a new transaction.
 
         Args:
@@ -582,10 +612,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
 
             transaction_data = {
                 "account_id": account_id,
@@ -623,21 +649,21 @@ class YNABClient:
                 "category_name": txn.get("category_name"),
             }
         except Exception as e:
-            raise Exception(f"Failed to create transaction: {e}")
+            raise Exception(f"Failed to create transaction: {e}") from e
 
     async def update_transaction(
         self,
         budget_id: str,
         transaction_id: str,
-        account_id: Optional[str] = None,
-        date: Optional[str] = None,
-        amount: Optional[float] = None,
-        payee_name: Optional[str] = None,
-        category_id: Optional[str] = None,
-        memo: Optional[str] = None,
-        cleared: Optional[str] = None,
-        approved: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+        account_id: str | None = None,
+        date: str | None = None,
+        amount: float | None = None,
+        payee_name: str | None = None,
+        category_id: str | None = None,
+        memo: str | None = None,
+        cleared: str | None = None,
+        approved: bool | None = None,
+    ) -> dict[str, Any]:
         """Update an existing transaction.
 
         Args:
@@ -657,10 +683,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{transaction_id}"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
 
             # Build update payload with only provided fields
             transaction_data = {}
@@ -702,9 +724,9 @@ class YNABClient:
                 "category_name": txn.get("category_name"),
             }
         except Exception as e:
-            raise Exception(f"Failed to update transaction: {e}")
+            raise Exception(f"Failed to update transaction: {e}") from e
 
-    def _generate_graph(self, data: List[tuple], title: str = "") -> str:
+    def _generate_graph(self, data: list[tuple], title: str = "") -> str:
         """Generate a terminal graph using termgraph.
 
         Args:
@@ -728,22 +750,22 @@ class YNABClient:
 
             # Configure termgraph
             args = {
-                'stacked': False,
-                'width': 50,
-                'format': '{:.2f}',
-                'suffix': '',
-                'no_labels': False,
-                'color': None,
-                'vertical': False,
-                'different_scale': False,
-                'calendar': False,
-                'start_dt': None,
-                'custom_tick': '',
-                'delim': '',
-                'verbose': False,
-                'label_before': False,
-                'histogram': False,
-                'no_values': False,
+                "stacked": False,
+                "width": 50,
+                "format": "{:.2f}",
+                "suffix": "",
+                "no_labels": False,
+                "color": None,
+                "vertical": False,
+                "different_scale": False,
+                "calendar": False,
+                "start_dt": None,
+                "custom_tick": "",
+                "delim": "",
+                "verbose": False,
+                "label_before": False,
+                "histogram": False,
+                "no_values": False,
             }
 
             # Print title
@@ -768,7 +790,7 @@ class YNABClient:
         since_date: str,
         until_date: str,
         include_graph: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get spending summary for a category over a date range.
 
         Args:
@@ -785,7 +807,6 @@ class YNABClient:
             # Get transactions for the category
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
             params = {"since_date": since_date}
-            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             result = await self._make_request_with_retry("get", url, params=params)
 
@@ -837,13 +858,12 @@ class YNABClient:
             if include_graph and monthly_breakdown:
                 graph_data = [(item["month"], item["spent"]) for item in monthly_breakdown]
                 result["graph"] = self._generate_graph(
-                    graph_data,
-                    f"Monthly Spending: {since_date} to {until_date}"
+                    graph_data, f"Monthly Spending: {since_date} to {until_date}"
                 )
 
             return result
         except Exception as e:
-            raise Exception(f"Failed to get category spending summary: {e}")
+            raise Exception(f"Failed to get category spending summary: {e}") from e
 
     async def compare_spending_by_year(
         self,
@@ -852,7 +872,7 @@ class YNABClient:
         start_year: int,
         num_years: int = 5,
         include_graph: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compare spending for a category across multiple years.
 
         Args:
@@ -873,7 +893,6 @@ class YNABClient:
 
             url = f"{self.api_base_url}/budgets/{budget_id}/transactions"
             params = {"since_date": since_date}
-            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             result = await self._make_request_with_retry("get", url, params=params)
 
@@ -914,7 +933,7 @@ class YNABClient:
                     if prev_total != 0:
                         percent_change = (change / abs(prev_total)) * 100
                     else:
-                        percent_change = 0 if change == 0 else float('inf')
+                        percent_change = 0 if change == 0 else float("inf")
 
                     year_data["change_from_previous"] = change
                     year_data["percent_change"] = percent_change
@@ -936,15 +955,14 @@ class YNABClient:
             if include_graph and yearly_totals:
                 graph_data = [(year, yearly_totals[year]) for year in years_sorted]
                 result_data["graph"] = self._generate_graph(
-                    graph_data,
-                    f"Year-over-Year Comparison: {start_year}-{end_year}"
+                    graph_data, f"Year-over-Year Comparison: {start_year}-{end_year}"
                 )
 
             return result_data
         except Exception as e:
-            raise Exception(f"Failed to compare spending by year: {e}")
+            raise Exception(f"Failed to compare spending by year: {e}") from e
 
-    async def get_scheduled_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
+    async def get_scheduled_transactions(self, budget_id: str) -> list[dict[str, Any]]:
         """Get all scheduled transactions.
 
         Args:
@@ -955,32 +973,33 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
-            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             result = await self._make_request_with_retry("get", url)
 
             scheduled_txns = []
             for txn in result["data"]["scheduled_transactions"]:
-                scheduled_txns.append({
-                    "id": txn["id"],
-                    "date_first": txn.get("date_first"),
-                    "date_next": txn.get("date_next"),
-                    "frequency": txn.get("frequency"),
-                    "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
-                    "memo": txn.get("memo"),
-                    "flag_color": txn.get("flag_color"),
-                    "account_id": txn.get("account_id"),
-                    "account_name": txn.get("account_name"),
-                    "payee_id": txn.get("payee_id"),
-                    "payee_name": txn.get("payee_name"),
-                    "category_id": txn.get("category_id"),
-                    "category_name": txn.get("category_name"),
-                    "deleted": txn.get("deleted"),
-                })
+                scheduled_txns.append(
+                    {
+                        "id": txn["id"],
+                        "date_first": txn.get("date_first"),
+                        "date_next": txn.get("date_next"),
+                        "frequency": txn.get("frequency"),
+                        "amount": txn["amount"] / 1000 if txn.get("amount") else 0,
+                        "memo": txn.get("memo"),
+                        "flag_color": txn.get("flag_color"),
+                        "account_id": txn.get("account_id"),
+                        "account_name": txn.get("account_name"),
+                        "payee_id": txn.get("payee_id"),
+                        "payee_name": txn.get("payee_name"),
+                        "category_id": txn.get("category_id"),
+                        "category_name": txn.get("category_name"),
+                        "deleted": txn.get("deleted"),
+                    }
+                )
 
             return scheduled_txns
         except Exception as e:
-            raise Exception(f"Failed to get scheduled transactions: {e}")
+            raise Exception(f"Failed to get scheduled transactions: {e}") from e
 
     async def create_scheduled_transaction(
         self,
@@ -989,11 +1008,11 @@ class YNABClient:
         date_first: str,
         frequency: str,
         amount: float,
-        payee_name: Optional[str] = None,
-        category_id: Optional[str] = None,
-        memo: Optional[str] = None,
-        flag_color: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        payee_name: str | None = None,
+        category_id: str | None = None,
+        memo: str | None = None,
+        flag_color: str | None = None,
+    ) -> dict[str, Any]:
         """Create a scheduled transaction.
 
         Args:
@@ -1012,10 +1031,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
 
             scheduled_transaction_data = {
                 "account_id": account_id,
@@ -1052,13 +1067,13 @@ class YNABClient:
                 "category_id": txn.get("category_id"),
             }
         except Exception as e:
-            raise Exception(f"Failed to create scheduled transaction: {e}")
+            raise Exception(f"Failed to create scheduled transaction: {e}") from e
 
     async def delete_scheduled_transaction(
         self,
         budget_id: str,
         scheduled_transaction_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete a scheduled transaction.
 
         Args:
@@ -1070,7 +1085,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/scheduled_transactions/{scheduled_transaction_id}"
-            headers = {"Authorization": f"Bearer {self._access_token}"}
 
             result = await self._make_request_with_retry("delete", url)
 
@@ -1079,9 +1093,9 @@ class YNABClient:
                 "deleted": True,
             }
         except Exception as e:
-            raise Exception(f"Failed to delete scheduled transaction: {e}")
+            raise Exception(f"Failed to delete scheduled transaction: {e}") from e
 
-    async def get_unapproved_transactions(self, budget_id: str) -> List[Dict[str, Any]]:
+    async def get_unapproved_transactions(self, budget_id: str) -> list[dict[str, Any]]:
         """Get all unapproved transactions.
 
         Args:
@@ -1096,23 +1110,25 @@ class YNABClient:
             transactions = []
             for txn in response.data.transactions:
                 if not txn.approved and not txn.deleted:
-                    transactions.append({
-                        "id": txn.id,
-                        "date": str(txn.date),
-                        "amount": txn.amount / 1000 if txn.amount else 0,
-                        "memo": txn.memo,
-                        "cleared": txn.cleared,
-                        "account_id": txn.account_id,
-                        "account_name": txn.account_name,
-                        "payee_id": txn.payee_id,
-                        "payee_name": txn.payee_name,
-                        "category_id": txn.category_id,
-                        "category_name": txn.category_name,
-                    })
+                    transactions.append(
+                        {
+                            "id": txn.id,
+                            "date": str(txn.date),
+                            "amount": txn.amount / 1000 if txn.amount else 0,
+                            "memo": txn.memo,
+                            "cleared": txn.cleared,
+                            "account_id": txn.account_id,
+                            "account_name": txn.account_name,
+                            "payee_id": txn.payee_id,
+                            "payee_name": txn.payee_name,
+                            "category_id": txn.category_id,
+                            "category_name": txn.category_name,
+                        }
+                    )
 
             return transactions
         except Exception as e:
-            raise Exception(f"Failed to get unapproved transactions: {e}")
+            raise Exception(f"Failed to get unapproved transactions: {e}") from e
 
     async def update_category_budget(
         self,
@@ -1120,7 +1136,7 @@ class YNABClient:
         month: str,
         category_id: str,
         budgeted: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Update the budgeted amount for a category in a specific month.
 
         Uses direct API calls since ynab-sdk is read-only.
@@ -1136,10 +1152,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}/categories/{category_id}"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
             data = {
                 "category": {
                     "budgeted": int(budgeted * 1000)  # Convert to milliunits
@@ -1157,17 +1169,17 @@ class YNABClient:
                 "balance": cat["balance"] / 1000 if cat["balance"] else 0,
             }
         except Exception as e:
-            raise Exception(f"Failed to update category budget: {e}")
+            raise Exception(f"Failed to update category budget: {e}") from e
 
     async def update_category(
         self,
         budget_id: str,
         category_id: str,
-        name: Optional[str] = None,
-        note: Optional[str] = None,
-        category_group_id: Optional[str] = None,
-        goal_target: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        name: str | None = None,
+        note: str | None = None,
+        category_group_id: str | None = None,
+        goal_target: float | None = None,
+    ) -> dict[str, Any]:
         """Update a category's properties.
 
         Args:
@@ -1183,10 +1195,6 @@ class YNABClient:
         """
         try:
             url = f"{self.api_base_url}/budgets/{budget_id}/categories/{category_id}"
-            headers = {
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/json",
-            }
 
             # Build update payload with only provided fields
             category_data = {}
@@ -1200,7 +1208,9 @@ class YNABClient:
                 category_data["goal_target"] = int(goal_target * 1000)  # Convert to milliunits
 
             if not category_data:
-                raise ValueError("At least one field (name, note, category_group_id, or goal_target) must be provided")
+                raise ValueError(
+                    "At least one field (name, note, category_group_id, or goal_target) must be provided"
+                )
 
             data = {"category": category_data}
 
@@ -1219,7 +1229,7 @@ class YNABClient:
                 "balance": cat.get("balance", 0) / 1000 if cat.get("balance") else 0,
             }
         except Exception as e:
-            raise Exception(f"Failed to update category: {e}")
+            raise Exception(f"Failed to update category: {e}") from e
 
     async def move_category_funds(
         self,
@@ -1228,7 +1238,7 @@ class YNABClient:
         from_category_id: str,
         to_category_id: str,
         amount: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Move funds from one category to another in a specific month.
 
         Uses direct API calls since ynab-sdk is read-only.
@@ -1291,13 +1301,13 @@ class YNABClient:
                 "amount_moved": amount,
             }
         except Exception as e:
-            raise Exception(f"Failed to move category funds: {e}")
+            raise Exception(f"Failed to move category funds: {e}") from e
 
     async def get_transaction(
         self,
         budget_id: str,
         transaction_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get a single transaction with all details including subtransactions.
 
         Args:
@@ -1317,15 +1327,17 @@ class YNABClient:
             subtransactions = []
             if txn.get("subtransactions"):
                 for sub in txn["subtransactions"]:
-                    subtransactions.append({
-                        "id": sub.get("id"),
-                        "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
-                        "memo": sub.get("memo"),
-                        "payee_id": sub.get("payee_id"),
-                        "payee_name": sub.get("payee_name"),
-                        "category_id": sub.get("category_id"),
-                        "category_name": sub.get("category_name"),
-                    })
+                    subtransactions.append(
+                        {
+                            "id": sub.get("id"),
+                            "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
+                            "memo": sub.get("memo"),
+                            "payee_id": sub.get("payee_id"),
+                            "payee_name": sub.get("payee_name"),
+                            "category_id": sub.get("category_id"),
+                            "category_name": sub.get("category_name"),
+                        }
+                    )
 
             return {
                 "id": txn["id"],
@@ -1344,7 +1356,7 @@ class YNABClient:
                 "subtransactions": subtransactions if subtransactions else None,
             }
         except Exception as e:
-            raise Exception(f"Failed to get transaction: {e}")
+            raise Exception(f"Failed to get transaction: {e}") from e
 
     async def create_split_transaction(
         self,
@@ -1352,12 +1364,12 @@ class YNABClient:
         account_id: str,
         date: str,
         amount: float,
-        subtransactions: List[Dict[str, Any]],
-        payee_name: Optional[str] = None,
-        memo: Optional[str] = None,
+        subtransactions: list[dict[str, Any]],
+        payee_name: str | None = None,
+        memo: str | None = None,
         cleared: str = "uncleared",
         approved: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a new split transaction with subtransactions.
 
         Args:
@@ -1425,15 +1437,17 @@ class YNABClient:
             subtransactions_response = []
             if txn.get("subtransactions"):
                 for sub in txn["subtransactions"]:
-                    subtransactions_response.append({
-                        "id": sub.get("id"),
-                        "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
-                        "memo": sub.get("memo"),
-                        "payee_id": sub.get("payee_id"),
-                        "payee_name": sub.get("payee_name"),
-                        "category_id": sub.get("category_id"),
-                        "category_name": sub.get("category_name"),
-                    })
+                    subtransactions_response.append(
+                        {
+                            "id": sub.get("id"),
+                            "amount": sub["amount"] / MILLIUNITS_FACTOR if sub.get("amount") else 0,
+                            "memo": sub.get("memo"),
+                            "payee_id": sub.get("payee_id"),
+                            "payee_name": sub.get("payee_name"),
+                            "category_id": sub.get("category_id"),
+                            "category_name": sub.get("category_name"),
+                        }
+                    )
 
             return {
                 "id": txn["id"],
@@ -1451,14 +1465,14 @@ class YNABClient:
                 "subtransactions": subtransactions_response,
             }
         except Exception as e:
-            raise Exception(f"Failed to create split transaction: {e}")
+            raise Exception(f"Failed to create split transaction: {e}") from e
 
     async def prepare_split_for_matching(
         self,
         budget_id: str,
         transaction_id: str,
-        subtransactions: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        subtransactions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Prepare a split transaction to match with an existing imported transaction.
 
         This fetches an existing transaction's details and creates a new unapproved split
@@ -1515,4 +1529,4 @@ class YNABClient:
                 ),
             }
         except Exception as e:
-            raise Exception(f"Failed to prepare split for matching: {e}")
+            raise Exception(f"Failed to prepare split for matching: {e}") from e

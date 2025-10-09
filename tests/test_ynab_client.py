@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.ynab_mcp.ynab_client import YNABClient
+
+import pytest
+
 from src.ynab_mcp.exceptions import YNABValidationError
+from src.ynab_mcp.ynab_client import YNABClient
 
 
 @pytest.fixture
@@ -30,7 +32,9 @@ def test_client_initialization():
 
 def test_client_initialization_fails_without_token():
     """Test client raises error without access token."""
-    with pytest.raises(YNABValidationError, match="YNAB_ACCESS_TOKEN environment variable must be set"):
+    with pytest.raises(
+        YNABValidationError, match="YNAB_ACCESS_TOKEN environment variable must be set"
+    ):
         YNABClient(None)
 
 
@@ -177,13 +181,13 @@ async def test_get_categories_includes_hidden_when_requested(client, mock_ynab_s
     result = await client.get_categories("budget-123", include_hidden=True)
 
     assert len(result) == 1
-    assert result[0]["categories"][0]["hidden"] == True
+    assert result[0]["categories"][0]["hidden"]
 
 
 @pytest.mark.asyncio
 async def test_milliunits_conversion():
     """Test milliunits conversion for various amounts."""
-    client = YNABClient("test_token")
+    YNABClient("test_token")
 
     # Test conversion from milliunits to dollars
     assert 10000000 / 1000 == 10000.0
@@ -216,7 +220,7 @@ async def test_search_transactions_handles_null_fields(client):
                         "amount": -3000,
                         "payee_name": "Store",
                         "memo": "groceries",
-                    }
+                    },
                 ]
             }
         }
@@ -252,16 +256,16 @@ async def test_pagination_calculations(client):
         assert result["pagination"]["per_page"] == 100
         assert result["pagination"]["total_count"] == 250
         assert result["pagination"]["total_pages"] == 3
-        assert result["pagination"]["has_next_page"] == True
-        assert result["pagination"]["has_prev_page"] == False
+        assert result["pagination"]["has_next_page"]
+        assert not result["pagination"]["has_prev_page"]
         assert len(result["transactions"]) == 100
 
         # Get page 3 (last page)
         result = await client.get_transactions("budget-123", limit=100, page=3)
 
         assert result["pagination"]["page"] == 3
-        assert result["pagination"]["has_next_page"] == False
-        assert result["pagination"]["has_prev_page"] == True
+        assert not result["pagination"]["has_next_page"]
+        assert result["pagination"]["has_prev_page"]
         assert len(result["transactions"]) == 50  # Remaining transactions
 
 
@@ -331,7 +335,9 @@ async def test_compare_spending_by_year(client):
         # Mock API response
         mock_retry.return_value = {"data": {"transactions": transactions}}
 
-        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
+        result = await client.compare_spending_by_year(
+            "budget-123", "cat-123", 2023, 3, include_graph=False
+        )
 
         assert result["years"] == "2023-2025"
         assert result["average_per_year"] == pytest.approx(-123.333, rel=0.01)
@@ -374,7 +380,9 @@ async def test_compare_spending_by_year_handles_zero_spending(client):
         # Mock API response
         mock_retry.return_value = {"data": {"transactions": transactions}}
 
-        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 3, include_graph=False)
+        result = await client.compare_spending_by_year(
+            "budget-123", "cat-123", 2023, 3, include_graph=False
+        )
 
         # Check that 2024 has zero spending
         assert result["yearly_comparison"][1]["year"] == "2024"
@@ -426,7 +434,9 @@ async def test_compare_spending_by_year_with_graph(client):
         # Mock API response
         mock_retry.return_value = {"data": {"transactions": transactions}}
 
-        result = await client.compare_spending_by_year("budget-123", "cat-123", 2023, 2, include_graph=True)
+        result = await client.compare_spending_by_year(
+            "budget-123", "cat-123", 2023, 2, include_graph=True
+        )
 
         # Verify graph is included
         assert "graph" in result
@@ -560,7 +570,7 @@ async def test_delete_scheduled_transaction(client):
 
         result = await client.delete_scheduled_transaction("budget-123", "sched-123")
 
-        assert result["deleted"] == True
+        assert result["deleted"]
         assert result["scheduled_transaction"]["id"] == "sched-123"
 
         # Verify DELETE request was made to correct URL

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import os
 import json
 import logging
+import os
 from functools import lru_cache
-from mcp.server import FastMCP
-from dotenv import load_dotenv
 
-from .ynab_client import YNABClient
+from dotenv import load_dotenv
+from mcp.server import FastMCP
+
 from .exceptions import YNABValidationError
+from .ynab_client import YNABClient
 
 # Configure logging
 logging.basicConfig(
@@ -140,7 +141,9 @@ async def get_transactions(
         compare_spending_by_year instead to avoid timeouts and reduce context usage.
     """
     client = get_ynab_client()
-    result = await client.get_transactions(budget_id, since_date, until_date, account_id, category_id, limit, page)
+    result = await client.get_transactions(
+        budget_id, since_date, until_date, account_id, category_id, limit, page
+    )
     return json.dumps(result, indent=2)
 
 
@@ -243,7 +246,16 @@ async def update_transaction(
     """
     client = get_ynab_client()
     result = await client.update_transaction(
-        budget_id, transaction_id, account_id, date, amount, payee_name, category_id, memo, cleared, approved
+        budget_id,
+        transaction_id,
+        account_id,
+        date,
+        amount,
+        payee_name,
+        category_id,
+        memo,
+        cleared,
+        approved,
     )
     return json.dumps(result, indent=2)
 
@@ -269,7 +281,9 @@ async def get_category_spending_summary(
         JSON string with summary including total spent, average per month, transaction count, monthly breakdown, and optional graph
     """
     client = get_ynab_client()
-    result = await client.get_category_spending_summary(budget_id, category_id, since_date, until_date, include_graph)
+    result = await client.get_category_spending_summary(
+        budget_id, category_id, since_date, until_date, include_graph
+    )
     return json.dumps(result, indent=2)
 
 
@@ -294,7 +308,9 @@ async def compare_spending_by_year(
         JSON string with year-over-year comparison including totals, changes, percentage changes, and optional graph
     """
     client = get_ynab_client()
-    result = await client.compare_spending_by_year(budget_id, category_id, start_year, num_years, include_graph)
+    result = await client.compare_spending_by_year(
+        budget_id, category_id, start_year, num_years, include_graph
+    )
     return json.dumps(result, indent=2)
 
 
@@ -343,7 +359,15 @@ async def create_scheduled_transaction(
     """
     client = get_ynab_client()
     result = await client.create_scheduled_transaction(
-        budget_id, account_id, date_first, frequency, amount, payee_name, category_id, memo, flag_color
+        budget_id,
+        account_id,
+        date_first,
+        frequency,
+        amount,
+        payee_name,
+        category_id,
+        memo,
+        flag_color,
     )
     return json.dumps(result, indent=2)
 
@@ -425,7 +449,9 @@ async def update_category(
         JSON string with the updated category
     """
     client = get_ynab_client()
-    result = await client.update_category(budget_id, category_id, name, note, category_group_id, goal_target)
+    result = await client.update_category(
+        budget_id, category_id, name, note, category_group_id, goal_target
+    )
     return json.dumps(result, indent=2)
 
 
@@ -450,7 +476,9 @@ async def move_category_funds(
         JSON string with updated from and to categories
     """
     client = get_ynab_client()
-    result = await client.move_category_funds(budget_id, month, from_category_id, to_category_id, amount)
+    result = await client.move_category_funds(
+        budget_id, month, from_category_id, to_category_id, amount
+    )
     return json.dumps(result, indent=2)
 
 
@@ -518,10 +546,18 @@ async def create_split_transaction(
     try:
         subtransactions_list = json.loads(subtransactions)
     except json.JSONDecodeError as e:
-        raise YNABValidationError(f"Invalid subtransactions JSON: {e}")
+        raise YNABValidationError(f"Invalid subtransactions JSON: {e}") from e
 
     result = await client.create_split_transaction(
-        budget_id, account_id, date, amount, subtransactions_list, payee_name, memo, cleared, approved
+        budget_id,
+        account_id,
+        date,
+        amount,
+        subtransactions_list,
+        payee_name,
+        memo,
+        cleared,
+        approved,
     )
     return json.dumps(result, indent=2)
 
@@ -571,9 +607,11 @@ async def prepare_split_for_matching(
     try:
         subtransactions_list = json.loads(subtransactions)
     except json.JSONDecodeError as e:
-        raise YNABValidationError(f"Invalid subtransactions JSON: {e}")
+        raise YNABValidationError(f"Invalid subtransactions JSON: {e}") from e
 
-    result = await client.prepare_split_for_matching(budget_id, transaction_id, subtransactions_list)
+    result = await client.prepare_split_for_matching(
+        budget_id, transaction_id, subtransactions_list
+    )
     return json.dumps(result, indent=2)
 
 
@@ -596,20 +634,26 @@ async def health_check() -> str:
         # Make a lightweight API call to verify connectivity
         budgets = await client.get_budgets()
 
-        return json.dumps({
-            "status": "healthy",
-            "api_connected": True,
-            "budgets_count": len(budgets),
-            "message": "YNAB MCP server is running and API is accessible"
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "healthy",
+                "api_connected": True,
+                "budgets_count": len(budgets),
+                "message": "YNAB MCP server is running and API is accessible",
+            },
+            indent=2,
+        )
     except Exception as e:
         logger.error(f"Health check failed: {e}", exc_info=True)
-        return json.dumps({
-            "status": "unhealthy",
-            "api_connected": False,
-            "error": str(e),
-            "message": "YNAB MCP server is running but API is not accessible"
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "unhealthy",
+                "api_connected": False,
+                "error": str(e),
+                "message": "YNAB MCP server is running but API is not accessible",
+            },
+            indent=2,
+        )
 
 
 def main():
