@@ -1186,6 +1186,71 @@ async def test_get_underfunded_goals(client):
 
 
 @pytest.mark.asyncio
+async def test_get_underfunded_goals_excludes_hidden_categories(client):
+    """Test get_underfunded_goals excludes hidden categories."""
+    # Mock month data with hidden and visible underfunded categories
+    month_data = {
+        "month": "2025-10-01",
+        "categories": [
+            # Visible underfunded category
+            {
+                "id": "cat-1",
+                "name": "Emergency Fund",
+                "budgeted": 500000,  # $500
+                "goal_type": "TB",
+                "goal_target": 1000000,  # $1000
+                "goal_under_funded": 500000,  # $500 needed
+                "hidden": False,
+            },
+            # Hidden underfunded category (should be excluded)
+            {
+                "id": "cat-2",
+                "name": "Old Goal",
+                "budgeted": 0,
+                "goal_type": "TB",
+                "goal_target": 500000,  # $500
+                "goal_under_funded": 500000,  # $500 needed
+                "hidden": True,
+            },
+            # Deleted underfunded category (should be excluded)
+            {
+                "id": "cat-3",
+                "name": "Deleted Goal",
+                "budgeted": 0,
+                "goal_type": "TB",
+                "goal_target": 300000,  # $300
+                "goal_under_funded": 300000,  # $300 needed
+                "deleted": True,
+            },
+        ],
+    }
+
+    # Mock category groups for mapping
+    mock_cat_1 = MagicMock()
+    mock_cat_1.id = "cat-1"
+
+    mock_group_1 = MagicMock()
+    mock_group_1.name = "Savings"
+    mock_group_1.categories = [mock_cat_1]
+
+    mock_response = MagicMock()
+    mock_response.data.category_groups = [mock_group_1]
+    client.client.categories.get_categories.return_value = mock_response
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"month": month_data}}
+
+        result = await client.get_underfunded_goals("budget-123", "2025-10-01")
+
+        # Should only include the visible category, not hidden or deleted
+        assert result["total_underfunded"] == 500.0  # Only cat-1
+        assert result["underfunded_count"] == 1
+        assert len(result["underfunded_categories"]) == 1
+        assert result["underfunded_categories"][0]["category_name"] == "Emergency Fund"
+
+
+@pytest.mark.asyncio
 async def test_get_underfunded_goals_no_underfunded_categories(client):
     """Test get_underfunded_goals when all categories are fully funded."""
     # Mock month data with no underfunded categories
