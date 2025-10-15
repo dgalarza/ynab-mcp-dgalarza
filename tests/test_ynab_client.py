@@ -863,3 +863,221 @@ async def test_prepare_split_for_matching(client):
 
         # Verify two API calls were made (get + create)
         assert mock_retry.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_start_reconciliation(client):
+    """Test start_reconciliation returns account data for reconciliation."""
+    # Mock account response
+    account_data = {
+        "id": "account-123",
+        "name": "Checking Account",
+        "balance": 1500000,  # $1,500.00 in milliunits
+        "cleared_balance": 1245670,  # $1,245.67 in milliunits
+        "uncleared_balance": 254330,  # $254.33 in milliunits
+    }
+
+    # Mock transactions response
+    transactions = [
+        # Cleared transactions
+        {"id": "txn-1", "date": "2025-10-01", "amount": -10000, "cleared": "cleared", "deleted": False},
+        {"id": "txn-2", "date": "2025-10-02", "amount": -15000, "cleared": "cleared", "deleted": False},
+        {"id": "txn-3", "date": "2025-10-03", "amount": -20000, "cleared": "cleared", "deleted": False},
+        # Uncleared transactions
+        {"id": "txn-4", "date": "2025-10-04", "amount": -5000, "cleared": "uncleared", "deleted": False},
+        {"id": "txn-5", "date": "2025-10-05", "amount": -3000, "cleared": "uncleared", "deleted": False},
+        # Already reconciled (should be skipped)
+        {"id": "txn-6", "date": "2025-09-30", "amount": -50000, "cleared": "reconciled", "deleted": False},
+        # Deleted transaction (should be skipped)
+        {"id": "txn-7", "date": "2025-10-06", "amount": -10000, "cleared": "cleared", "deleted": True},
+    ]
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API responses: first call for account, second for transactions
+        mock_retry.side_effect = [
+            {"data": {"account": account_data}},
+            {"data": {"transactions": transactions}},
+        ]
+
+        result = await client.start_reconciliation("budget-123", "account-123")
+
+        # Check account info
+        assert result["account_id"] == "account-123"
+        assert result["account_name"] == "Checking Account"
+        assert result["cleared_balance"] == 1245.67
+        assert result["uncleared_balance"] == 254.33
+        assert result["total_balance"] == 1500.0
+
+        # Check transaction counts
+        assert result["cleared_transaction_count"] == 3
+        assert result["uncleared_transaction_count"] == 2
+
+        # Check cleared transaction IDs
+        assert len(result["cleared_transaction_ids"]) == 3
+        assert "txn-1" in result["cleared_transaction_ids"]
+        assert "txn-2" in result["cleared_transaction_ids"]
+        assert "txn-3" in result["cleared_transaction_ids"]
+        # Reconciled and deleted should not be in the list
+        assert "txn-6" not in result["cleared_transaction_ids"]
+        assert "txn-7" not in result["cleared_transaction_ids"]
+
+        # Verify two API calls were made
+        assert mock_retry.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_reconciliation_matches(client):
+    """Test complete_reconciliation when balances match."""
+    # Mock successful reconciliation
+    reconciled_txn = {
+        "id": "txn-1",
+        "date": "2025-10-01",
+        "amount": -10000,
+        "cleared": "reconciled",
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API responses for each transaction update
+        mock_retry.return_value = {"data": {"transaction": reconciled_txn}}
+
+        cleared_ids = ["txn-1", "txn-2", "txn-3"]
+        result = await client.complete_reconciliation(
+            budget_id="budget-123",
+            account_id="account-123",
+            cleared_transaction_ids=cleared_ids,
+            matches=True,
+        )
+
+        # Check result
+        assert result["status"] == "completed"
+        assert result["reconciled_count"] == 3
+        assert "Successfully reconciled" in result["message"]
+
+        # Verify three API calls were made (one for each transaction)
+        assert mock_retry.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_complete_reconciliation_discrepancy_no_adjustment(client):
+    """Test complete_reconciliation when balances don't match, no adjustment."""
+    # Mock account response with cleared balance
+    account_data = {
+        "id": "account-123",
+        "name": "Checking Account",
+        "cleared_balance": 1245670,  # $1,245.67 in milliunits
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"account": account_data}}
+
+        result = await client.complete_reconciliation(
+            budget_id="budget-123",
+            account_id="account-123",
+            cleared_transaction_ids=["txn-1", "txn-2"],
+            matches=False,
+            bank_balance=1250.00,
+            create_adjustment=False,
+        )
+
+        # Check result
+        assert result["status"] == "discrepancy_found"
+        assert result["ynab_cleared_balance"] == 1245.67
+        assert result["bank_balance"] == 1250.00
+        assert result["difference"] == pytest.approx(4.33, rel=0.01)
+        assert result["adjustment_created"] is False
+
+        # Verify only one API call was made (to get account balance)
+        assert mock_retry.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_reconciliation_discrepancy_with_adjustment(client):
+    """Test complete_reconciliation when balances don't match, with adjustment."""
+    # Mock account response
+    account_data = {
+        "id": "account-123",
+        "name": "Checking Account",
+        "cleared_balance": 1245670,  # $1,245.67 in milliunits
+    }
+
+    # Mock created adjustment transaction
+    adjustment_txn = {
+        "id": "txn-adjustment",
+        "date": "2025-10-15",
+        "amount": 4330,  # $4.33 in milliunits
+        "payee_name": "Reconciliation Adjustment",
+        "memo": "Adjustment to match bank balance of 1250.0",
+        "cleared": "cleared",
+        "approved": True,
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API responses: first for account, second for creating adjustment
+        mock_retry.side_effect = [
+            {"data": {"account": account_data}},
+            {"data": {"transaction": adjustment_txn}},
+        ]
+
+        result = await client.complete_reconciliation(
+            budget_id="budget-123",
+            account_id="account-123",
+            cleared_transaction_ids=["txn-1", "txn-2"],
+            matches=False,
+            bank_balance=1250.00,
+            create_adjustment=True,
+        )
+
+        # Check result
+        assert result["status"] == "completed_with_adjustment"
+        assert result["ynab_cleared_balance"] == 1245.67
+        assert result["bank_balance"] == 1250.00
+        assert result["difference"] == pytest.approx(4.33, rel=0.01)
+        assert result["adjustment_created"] is True
+        assert result["adjustment_transaction"]["id"] == "txn-adjustment"
+        assert result["adjustment_transaction"]["amount"] == 4.33
+        assert "Created adjustment transaction" in result["message"]
+
+        # Verify two API calls were made (get account + create transaction)
+        assert mock_retry.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_reconciliation_requires_bank_balance_when_no_match(client):
+    """Test complete_reconciliation raises error if bank_balance not provided when matches=False."""
+    with pytest.raises(Exception, match="bank_balance is required"):
+        await client.complete_reconciliation(
+            budget_id="budget-123",
+            account_id="account-123",
+            cleared_transaction_ids=["txn-1"],
+            matches=False,
+            bank_balance=None,  # Missing required parameter
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_reconciliation_handles_failed_transactions(client):
+    """Test complete_reconciliation handles some transactions failing to reconcile."""
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock: first transaction succeeds, second fails, third succeeds
+        mock_retry.side_effect = [
+            {"data": {"transaction": {"id": "txn-1", "cleared": "reconciled"}}},
+            Exception("API Error"),
+            {"data": {"transaction": {"id": "txn-3", "cleared": "reconciled"}}},
+        ]
+
+        cleared_ids = ["txn-1", "txn-2", "txn-3"]
+        result = await client.complete_reconciliation(
+            budget_id="budget-123",
+            account_id="account-123",
+            cleared_transaction_ids=cleared_ids,
+            matches=True,
+        )
+
+        # Check result - should have reconciled 2 out of 3
+        assert result["status"] == "completed"
+        assert result["reconciled_count"] == 2
+
+        # Verify three API calls were attempted
+        assert mock_retry.call_count == 3

@@ -616,6 +616,80 @@ async def prepare_split_for_matching(
 
 
 @mcp.tool()
+async def start_reconciliation(budget_id: str, account_id: str) -> str:
+    """Start an interactive reconciliation session for an account.
+
+    This begins the reconciliation process by retrieving the account's cleared balance
+    and transaction counts. The cleared balance should be compared against the user's
+    bank statement balance.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        account_id: The ID of the account to reconcile
+
+    Returns:
+        JSON string with reconciliation session data including:
+        - account_name: The name of the account
+        - cleared_balance: Balance of all cleared transactions (should match bank statement)
+        - cleared_transaction_count: Number of cleared transactions to be reconciled
+        - uncleared_transaction_count: Number of uncleared transactions (will be left alone)
+
+    Usage:
+        After calling this, ask the user: "Does your bank statement show [cleared_balance]?"
+        Then call complete_reconciliation() with the user's response.
+    """
+    client = get_ynab_client()
+    result = await client.start_reconciliation(budget_id, account_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def complete_reconciliation(
+    budget_id: str,
+    account_id: str,
+    cleared_transaction_ids: str,
+    matches: bool,
+    bank_balance: float = None,
+    create_adjustment: bool = False,
+) -> str:
+    """Complete a reconciliation session.
+
+    If balances match: marks all cleared transactions as reconciled (locks them).
+    If balances don't match: calculates the discrepancy and optionally creates
+    an adjustment transaction.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        account_id: The account ID being reconciled
+        cleared_transaction_ids: JSON array string of transaction IDs from start_reconciliation (e.g., '["id1", "id2"]')
+        matches: True if YNAB cleared balance matches bank statement, False otherwise
+        bank_balance: (required if matches=False) The actual bank statement balance
+        create_adjustment: If True and there's a discrepancy, create an adjustment transaction (default: False)
+
+    Returns:
+        JSON string with reconciliation results
+
+    Example:
+        If matches=True:
+            Returns count of reconciled transactions and success message
+        If matches=False:
+            Returns the difference between YNAB and bank, and adjustment details if created
+    """
+    client = get_ynab_client()
+
+    # Parse cleared_transaction_ids JSON string
+    try:
+        txn_ids_list = json.loads(cleared_transaction_ids)
+    except json.JSONDecodeError as e:
+        raise YNABValidationError(f"Invalid cleared_transaction_ids JSON: {e}") from e
+
+    result = await client.complete_reconciliation(
+        budget_id, account_id, txn_ids_list, matches, bank_balance, create_adjustment
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def health_check() -> str:
     """Check server health and YNAB API connectivity.
 

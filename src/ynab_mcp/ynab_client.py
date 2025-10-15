@@ -1530,3 +1530,190 @@ class YNABClient:
             }
         except Exception as e:
             raise Exception(f"Failed to prepare split for matching: {e}") from e
+
+    async def start_reconciliation(
+        self,
+        budget_id: str,
+        account_id: str,
+    ) -> dict[str, Any]:
+        """Start an interactive reconciliation session for an account.
+
+        Retrieves the account's cleared balance and transaction counts to begin
+        the reconciliation process. The cleared balance should be compared against
+        the user's bank statement.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            account_id: The account ID to reconcile
+
+        Returns:
+            Dictionary with reconciliation session data:
+            - account_id: The account ID
+            - account_name: The account name
+            - cleared_balance: Balance of all cleared transactions (compare to bank statement)
+            - uncleared_balance: Balance of uncleared transactions
+            - total_balance: Total account balance
+            - cleared_transaction_count: Number of cleared transactions to be reconciled
+            - uncleared_transaction_count: Number of uncleared transactions (will be left alone)
+            - cleared_transaction_ids: List of transaction IDs that are cleared
+
+        Next step:
+            Ask the user if the cleared_balance matches their bank statement balance.
+            Then call complete_reconciliation() with the user's response.
+        """
+        try:
+            # Get account details
+            url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}"
+            account_result = await self._make_request_with_retry("get", url)
+            account = account_result["data"]["account"]
+
+            # Get transactions for the account
+            txn_url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}/transactions"
+            txn_result = await self._make_request_with_retry("get", txn_url)
+
+            # Count cleared vs uncleared transactions, collect IDs of cleared ones
+            cleared_count = 0
+            uncleared_count = 0
+            cleared_transaction_ids = []
+
+            for txn in txn_result["data"]["transactions"]:
+                if txn.get("deleted"):
+                    continue
+
+                if txn.get("cleared") == "cleared":
+                    cleared_count += 1
+                    cleared_transaction_ids.append(txn["id"])
+                elif txn.get("cleared") == "uncleared":
+                    uncleared_count += 1
+                # Skip 'reconciled' transactions - they're already locked
+
+            return {
+                "account_id": account["id"],
+                "account_name": account["name"],
+                "cleared_balance": account["cleared_balance"] / MILLIUNITS_FACTOR
+                if account.get("cleared_balance")
+                else 0,
+                "uncleared_balance": account["uncleared_balance"] / MILLIUNITS_FACTOR
+                if account.get("uncleared_balance")
+                else 0,
+                "total_balance": account["balance"] / MILLIUNITS_FACTOR
+                if account.get("balance")
+                else 0,
+                "cleared_transaction_count": cleared_count,
+                "uncleared_transaction_count": uncleared_count,
+                "cleared_transaction_ids": cleared_transaction_ids,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to start reconciliation: {e}") from e
+
+    async def complete_reconciliation(
+        self,
+        budget_id: str,
+        account_id: str,
+        cleared_transaction_ids: list[str],
+        matches: bool,
+        bank_balance: float | None = None,
+        create_adjustment: bool = False,
+    ) -> dict[str, Any]:
+        """Complete a reconciliation session.
+
+        If balances match: marks all cleared transactions as reconciled (locks them).
+        If balances don't match: calculates the discrepancy and optionally creates
+        an adjustment transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            account_id: The account ID being reconciled
+            cleared_transaction_ids: List of transaction IDs that are cleared (from start_reconciliation)
+            matches: True if YNAB cleared balance matches bank statement
+            bank_balance: (required if matches=False) The actual bank statement balance
+            create_adjustment: If True and there's a discrepancy, create an adjustment transaction
+
+        Returns:
+            Dictionary with reconciliation results:
+            - If matches=True:
+                - reconciled_count: Number of transactions marked as reconciled
+                - status: "completed"
+            - If matches=False:
+                - ynab_cleared_balance: What YNAB shows
+                - bank_balance: What the bank shows
+                - difference: The discrepancy amount
+                - adjustment_created: Whether an adjustment transaction was created
+                - adjustment_transaction: Details of adjustment (if created)
+                - status: "discrepancy_found" or "completed" (if adjustment created)
+
+        Raises:
+            YNABValidationError: If matches=False but bank_balance not provided
+        """
+        try:
+            if matches:
+                # Mark all cleared transactions as reconciled
+                reconciled_count = 0
+                for txn_id in cleared_transaction_ids:
+                    try:
+                        url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{txn_id}"
+                        data = {"transaction": {"cleared": "reconciled"}}
+                        await self._make_request_with_retry("put", url, json=data)
+                        reconciled_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to reconcile transaction {txn_id}: {e}")
+
+                return {
+                    "status": "completed",
+                    "reconciled_count": reconciled_count,
+                    "message": f"Successfully reconciled {reconciled_count} transactions.",
+                }
+            else:
+                # Balances don't match - calculate discrepancy
+                if bank_balance is None:
+                    raise YNABValidationError(
+                        "bank_balance is required when matches=False"
+                    )
+
+                # Get current cleared balance
+                url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}"
+                account_result = await self._make_request_with_retry("get", url)
+                account = account_result["data"]["account"]
+
+                ynab_cleared = (
+                    account["cleared_balance"] / MILLIUNITS_FACTOR
+                    if account.get("cleared_balance")
+                    else 0
+                )
+                difference = bank_balance - ynab_cleared
+
+                result = {
+                    "status": "discrepancy_found",
+                    "ynab_cleared_balance": ynab_cleared,
+                    "bank_balance": bank_balance,
+                    "difference": difference,
+                    "adjustment_created": False,
+                }
+
+                if create_adjustment:
+                    # Create adjustment transaction
+                    import datetime
+
+                    adjustment_txn = await self.create_transaction(
+                        budget_id=budget_id,
+                        account_id=account_id,
+                        date=datetime.date.today().isoformat(),
+                        amount=difference,
+                        payee_name="Reconciliation Adjustment",
+                        memo=f"Adjustment to match bank balance of {bank_balance}",
+                        cleared="cleared",
+                        approved=True,
+                    )
+
+                    result["adjustment_created"] = True
+                    result["adjustment_transaction"] = adjustment_txn
+                    result["status"] = "completed_with_adjustment"
+                    result["message"] = (
+                        f"Created adjustment transaction for {difference}. "
+                        f"Balances should now match."
+                    )
+
+                return result
+
+        except Exception as e:
+            raise Exception(f"Failed to complete reconciliation: {e}") from e
