@@ -81,6 +81,29 @@ class YNABClient:
             self._http_client = None
             logger.debug("Closed HTTP client")
 
+    def _filter_categories(
+        self, categories: list[dict[str, Any]], include_hidden: bool = False
+    ) -> list[dict[str, Any]]:
+        """Filter categories to exclude hidden/deleted ones by default.
+
+        Args:
+            categories: List of category dictionaries from API
+            include_hidden: If True, include hidden categories (default: False)
+
+        Returns:
+            Filtered list of categories
+        """
+        filtered = []
+        for category in categories:
+            # Always skip deleted categories
+            if category.get("deleted"):
+                continue
+            # Skip hidden categories unless explicitly included
+            if not include_hidden and category.get("hidden"):
+                continue
+            filtered.append(category)
+        return filtered
+
     async def _make_request_with_retry(
         self,
         method: str,
@@ -379,7 +402,10 @@ class YNABClient:
         underfunded_categories = []
         total_underfunded = 0
 
-        for category in month_data.get("categories", []):
+        # Filter out hidden and deleted categories
+        categories = self._filter_categories(month_data.get("categories", []))
+
+        for category in categories:
             goal_under_funded = (
                 category.get("goal_under_funded", 0) / MILLIUNITS_FACTOR
                 if category.get("goal_under_funded")
@@ -460,7 +486,10 @@ class YNABClient:
         categories = []
 
         # Month data has a flat list of categories, not grouped
-        for category in month_data.get("categories", []):
+        # Filter out hidden and deleted categories
+        filtered_categories = self._filter_categories(month_data.get("categories", []))
+
+        for category in filtered_categories:
             budgeted = category["budgeted"] / MILLIUNITS_FACTOR if category["budgeted"] else 0
             activity = category["activity"] / MILLIUNITS_FACTOR if category["activity"] else 0
             balance = category["balance"] / MILLIUNITS_FACTOR if category["balance"] else 0
