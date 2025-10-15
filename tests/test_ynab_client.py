@@ -1081,3 +1081,148 @@ async def test_complete_reconciliation_handles_failed_transactions(client):
 
         # Verify three API calls were attempted
         assert mock_retry.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_get_underfunded_goals(client):
+    """Test get_underfunded_goals returns summary of underfunded categories."""
+    # Mock month data with underfunded categories
+    month_data = {
+        "month": "2025-10-01",
+        "categories": [
+            # Underfunded category 1
+            {
+                "id": "cat-1",
+                "name": "Emergency Fund",
+                "budgeted": 500000,  # $500
+                "goal_type": "TB",
+                "goal_target": 1000000,  # $1000
+                "goal_under_funded": 500000,  # $500 needed
+            },
+            # Underfunded category 2
+            {
+                "id": "cat-2",
+                "name": "Car Maintenance",
+                "budgeted": 100000,  # $100
+                "goal_type": "TBD",
+                "goal_target": 200000,  # $200
+                "goal_under_funded": 100000,  # $100 needed
+            },
+            # Fully funded category (should be excluded)
+            {
+                "id": "cat-3",
+                "name": "Groceries",
+                "budgeted": 500000,  # $500
+                "goal_type": "NEED",
+                "goal_target": 500000,  # $500
+                "goal_under_funded": 0,  # Fully funded
+            },
+            # Category with no goal (should be excluded)
+            {
+                "id": "cat-4",
+                "name": "Dining Out",
+                "budgeted": 200000,  # $200
+                "goal_type": None,
+                "goal_target": None,
+                "goal_under_funded": None,
+            },
+        ],
+    }
+
+    # Mock category groups for mapping
+    mock_cat_1 = MagicMock()
+    mock_cat_1.id = "cat-1"
+
+    mock_cat_2 = MagicMock()
+    mock_cat_2.id = "cat-2"
+
+    mock_cat_3 = MagicMock()
+    mock_cat_3.id = "cat-3"
+
+    mock_cat_4 = MagicMock()
+    mock_cat_4.id = "cat-4"
+
+    mock_group_1 = MagicMock()
+    mock_group_1.name = "Savings"
+    mock_group_1.categories = [mock_cat_1]
+
+    mock_group_2 = MagicMock()
+    mock_group_2.name = "Monthly Bills"
+    mock_group_2.categories = [mock_cat_2, mock_cat_3, mock_cat_4]
+
+    mock_response = MagicMock()
+    mock_response.data.category_groups = [mock_group_1, mock_group_2]
+    client.client.categories.get_categories.return_value = mock_response
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"month": month_data}}
+
+        result = await client.get_underfunded_goals("budget-123", "2025-10-01")
+
+        # Check summary
+        assert result["month"] == "2025-10-01"
+        assert result["total_underfunded"] == 600.0  # $500 + $100
+        assert result["underfunded_count"] == 2
+
+        # Check underfunded categories
+        assert len(result["underfunded_categories"]) == 2
+
+        # Check first underfunded category
+        assert result["underfunded_categories"][0]["category_name"] == "Emergency Fund"
+        assert result["underfunded_categories"][0]["category_group"] == "Savings"
+        assert result["underfunded_categories"][0]["budgeted"] == 500.0
+        assert result["underfunded_categories"][0]["goal_target"] == 1000.0
+        assert result["underfunded_categories"][0]["goal_under_funded"] == 500.0
+        assert result["underfunded_categories"][0]["goal_type"] == "TB"
+
+        # Check second underfunded category
+        assert result["underfunded_categories"][1]["category_name"] == "Car Maintenance"
+        assert result["underfunded_categories"][1]["category_group"] == "Monthly Bills"
+        assert result["underfunded_categories"][1]["budgeted"] == 100.0
+        assert result["underfunded_categories"][1]["goal_target"] == 200.0
+        assert result["underfunded_categories"][1]["goal_under_funded"] == 100.0
+        assert result["underfunded_categories"][1]["goal_type"] == "TBD"
+
+
+@pytest.mark.asyncio
+async def test_get_underfunded_goals_no_underfunded_categories(client):
+    """Test get_underfunded_goals when all categories are fully funded."""
+    # Mock month data with no underfunded categories
+    month_data = {
+        "month": "2025-10-01",
+        "categories": [
+            {
+                "id": "cat-1",
+                "name": "Emergency Fund",
+                "budgeted": 1000000,
+                "goal_type": "TB",
+                "goal_target": 1000000,
+                "goal_under_funded": 0,  # Fully funded
+            },
+            {
+                "id": "cat-2",
+                "name": "Groceries",
+                "budgeted": 500000,
+                "goal_type": "NEED",
+                "goal_target": 500000,
+                "goal_under_funded": 0,  # Fully funded
+            },
+        ],
+    }
+
+    mock_response = MagicMock()
+    mock_response.data.category_groups = []
+    client.client.categories.get_categories.return_value = mock_response
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"month": month_data}}
+
+        result = await client.get_underfunded_goals("budget-123", "2025-10-01")
+
+        # Check that no underfunded categories were found
+        assert result["month"] == "2025-10-01"
+        assert result["total_underfunded"] == 0.0
+        assert result["underfunded_count"] == 0
+        assert len(result["underfunded_categories"]) == 0

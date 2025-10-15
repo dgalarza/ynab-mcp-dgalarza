@@ -97,6 +97,32 @@ async def get_categories(budget_id: str, include_hidden: bool = False) -> str:
 
 
 @mcp.tool()
+async def get_underfunded_goals(budget_id: str, month: str) -> str:
+    """Get all underfunded category goals for a specific month.
+
+    Retrieves categories with goals that need additional funding to meet their targets,
+    and provides a total sum of how much is needed across all underfunded goals.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        month: Month in YYYY-MM-DD format (e.g., 2025-10-01 for October 2025)
+
+    Returns:
+        JSON string with underfunded goals summary including:
+        - total_underfunded: Total amount needed across all underfunded goals
+        - underfunded_count: Number of categories that need more funding
+        - underfunded_categories: List of each underfunded category with details
+
+    Use case:
+        Get a quick overview of how much money is needed to fully fund all category goals
+        for the month, helping with budget distribution decisions.
+    """
+    client = get_ynab_client()
+    result = await client.get_underfunded_goals(budget_id, month)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def get_budget_summary(budget_id: str, month: str) -> str:
     """Get budget summary for a specific month.
 

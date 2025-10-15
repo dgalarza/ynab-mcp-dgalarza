@@ -324,6 +324,96 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to get categories: {e}") from e
 
+    async def get_underfunded_goals(
+        self,
+        budget_id: str,
+        month: str,
+    ) -> dict[str, Any]:
+        """Get all underfunded category goals for a specific month.
+
+        Retrieves categories with goals that need additional funding to meet
+        their targets for the specified month.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            month: Month in YYYY-MM-DD format (e.g., 2025-01-01)
+
+        Returns:
+            Dictionary with underfunded goals summary:
+            - month: The month being analyzed
+            - total_underfunded: Total amount needed across all goals
+            - underfunded_count: Number of categories that are underfunded
+            - underfunded_categories: List of underfunded category details including:
+                - category_group: The category group name
+                - category_name: The category name
+                - category_id: The category ID
+                - budgeted: Amount currently budgeted
+                - goal_target: The goal target amount
+                - goal_under_funded: Amount still needed to meet goal
+                - goal_type: Type of goal (e.g., TB, TBD, MF, NEED, DEBT)
+
+        Note:
+            goal_under_funded represents the amount needed in the current month
+            to stay on track towards completing the goal within the goal period.
+        """
+        logger.debug(f"Getting underfunded goals for {budget_id}, month {month}")
+
+        # Validate inputs
+        budget_id = validate_budget_id(budget_id)
+        month = validate_date(month, "month")
+
+        # Use direct API call to get month-specific budget data
+        url = f"{self.api_base_url}/budgets/{budget_id}/months/{month}"
+        result = await self._make_request_with_retry("get", url)
+
+        month_data = result["data"]["month"]
+
+        # Get category groups to map category IDs to group names
+        categories_response = self.client.categories.get_categories(budget_id)
+        category_group_map = {}
+        for group in categories_response.data.category_groups:
+            for cat in group.categories:
+                category_group_map[cat.id] = group.name
+
+        # Collect underfunded categories
+        underfunded_categories = []
+        total_underfunded = 0
+
+        for category in month_data.get("categories", []):
+            goal_under_funded = (
+                category.get("goal_under_funded", 0) / MILLIUNITS_FACTOR
+                if category.get("goal_under_funded")
+                else 0
+            )
+
+            # Only include categories that have goals and are underfunded
+            if goal_under_funded > 0:
+                category_group_name = category_group_map.get(category["id"], "Unknown")
+
+                underfunded_categories.append(
+                    {
+                        "category_group": category_group_name,
+                        "category_name": category["name"],
+                        "category_id": category["id"],
+                        "budgeted": category.get("budgeted", 0) / MILLIUNITS_FACTOR
+                        if category.get("budgeted")
+                        else 0,
+                        "goal_target": category.get("goal_target", 0) / MILLIUNITS_FACTOR
+                        if category.get("goal_target")
+                        else 0,
+                        "goal_under_funded": goal_under_funded,
+                        "goal_type": category.get("goal_type"),
+                    }
+                )
+                total_underfunded += goal_under_funded
+
+        return {
+            "month": month,
+            "total_underfunded": total_underfunded,
+            "underfunded_count": len(underfunded_categories),
+            "underfunded_categories": underfunded_categories,
+        }
+
     async def get_budget_summary(self, budget_id: str, month: str) -> dict[str, Any]:
         """Get budget summary for a specific month.
 
