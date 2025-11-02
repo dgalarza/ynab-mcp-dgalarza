@@ -2,6 +2,10 @@
 
 MCP server for YNAB (You Need A Budget) integration, enabling AI assistants to help manage your budget.
 
+<a href="https://glama.ai/mcp/servers/@dgalarza/ynab-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@dgalarza/ynab-mcp/badge" alt="YNAB Server MCP server" />
+</a>
+
 ## Setup
 
 1. Install dependencies with `uv`:
