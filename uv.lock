@@ -840,8 +840,8 @@ wheels = [
 ]
 
 [[package]]
-name = "ynab-mcp"
-version = "0.1.0"
+name = "ynab-mcp-dgalarza"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
