@@ -845,6 +845,35 @@ class YNABClient:
         except Exception as e:
             raise Exception(f"Failed to update transaction: {e}") from e
 
+    async def delete_transaction(
+        self,
+        budget_id: str,
+        transaction_id: str,
+    ) -> dict[str, Any]:
+        """Delete a transaction.
+
+        Args:
+            budget_id: The budget ID or 'last-used'
+            transaction_id: The transaction ID to delete
+
+        Returns:
+            Confirmation dictionary with deleted transaction info
+
+        Raises:
+            YNABAPIError: If API request fails
+            YNABConnectionError: If connection fails
+        """
+        try:
+            url = f"{self.api_base_url}/budgets/{budget_id}/transactions/{transaction_id}"
+            result = await self._make_request_with_retry("delete", url)
+
+            return {
+                "transaction": result["data"]["transaction"],
+                "deleted": True,
+            }
+        except Exception as e:
+            raise Exception(f"Failed to delete transaction: {e}") from e
+
     def _generate_graph(self, data: list[tuple], title: str = "") -> str:
         """Generate a terminal graph using termgraph.
 
