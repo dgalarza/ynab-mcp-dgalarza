@@ -1785,9 +1785,7 @@ class YNABClient:
             else:
                 # Balances don't match - calculate discrepancy
                 if bank_balance is None:
-                    raise YNABValidationError(
-                        "bank_balance is required when matches=False"
-                    )
+                    raise YNABValidationError("bank_balance is required when matches=False")
 
                 # Get current cleared balance
                 url = f"{self.api_base_url}/budgets/{budget_id}/accounts/{account_id}"

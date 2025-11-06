@@ -880,16 +880,58 @@ async def test_start_reconciliation(client):
     # Mock transactions response
     transactions = [
         # Cleared transactions
-        {"id": "txn-1", "date": "2025-10-01", "amount": -10000, "cleared": "cleared", "deleted": False},
-        {"id": "txn-2", "date": "2025-10-02", "amount": -15000, "cleared": "cleared", "deleted": False},
-        {"id": "txn-3", "date": "2025-10-03", "amount": -20000, "cleared": "cleared", "deleted": False},
+        {
+            "id": "txn-1",
+            "date": "2025-10-01",
+            "amount": -10000,
+            "cleared": "cleared",
+            "deleted": False,
+        },
+        {
+            "id": "txn-2",
+            "date": "2025-10-02",
+            "amount": -15000,
+            "cleared": "cleared",
+            "deleted": False,
+        },
+        {
+            "id": "txn-3",
+            "date": "2025-10-03",
+            "amount": -20000,
+            "cleared": "cleared",
+            "deleted": False,
+        },
         # Uncleared transactions
-        {"id": "txn-4", "date": "2025-10-04", "amount": -5000, "cleared": "uncleared", "deleted": False},
-        {"id": "txn-5", "date": "2025-10-05", "amount": -3000, "cleared": "uncleared", "deleted": False},
+        {
+            "id": "txn-4",
+            "date": "2025-10-04",
+            "amount": -5000,
+            "cleared": "uncleared",
+            "deleted": False,
+        },
+        {
+            "id": "txn-5",
+            "date": "2025-10-05",
+            "amount": -3000,
+            "cleared": "uncleared",
+            "deleted": False,
+        },
         # Already reconciled (should be skipped)
-        {"id": "txn-6", "date": "2025-09-30", "amount": -50000, "cleared": "reconciled", "deleted": False},
+        {
+            "id": "txn-6",
+            "date": "2025-09-30",
+            "amount": -50000,
+            "cleared": "reconciled",
+            "deleted": False,
+        },
         # Deleted transaction (should be skipped)
-        {"id": "txn-7", "date": "2025-10-06", "amount": -10000, "cleared": "cleared", "deleted": True},
+        {
+            "id": "txn-7",
+            "date": "2025-10-06",
+            "amount": -10000,
+            "cleared": "cleared",
+            "deleted": True,
+        },
     ]
 
     with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
