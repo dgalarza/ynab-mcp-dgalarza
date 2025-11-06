@@ -63,6 +63,7 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 - `get_category` - Get a single category with full details including goal information
 - `get_categories` - Get all categories for a budget (lightweight list)
 - `get_budget_summary` - Get budget summary for a specific month
+- `get_underfunded_goals` - Get all underfunded category goals for a specific month
 - `update_category` - Update category properties (name, note, group, or goal target)
 - `update_category_budget` - Update the budgeted amount for a category in a specific month
 - `move_category_funds` - Move funds from one category to another
@@ -73,6 +74,7 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 - `search_transactions` - Search transactions by text in payee name or memo
 - `create_transaction` - Create a new transaction
 - `update_transaction` - Update an existing transaction (⚠️ cannot add/modify splits on existing transactions)
+- `delete_transaction` - Delete a transaction (⚠️ permanently deletes the transaction)
 - `get_unapproved_transactions` - Get all unapproved transactions that need review
 
 ### Split Transaction Management
@@ -83,6 +85,10 @@ Or add to `.claude.json` manually in the `mcpServers` section:
 - `get_scheduled_transactions` - List all scheduled transactions
 - `create_scheduled_transaction` - Create future/recurring transactions
 - `delete_scheduled_transaction` - Delete scheduled transactions
+
+### Account Reconciliation
+- `start_reconciliation` - Start an interactive reconciliation session for an account
+- `complete_reconciliation` - Complete reconciliation by marking transactions as reconciled or creating adjustment transactions
 
 ### Analytics & Reporting
 - `get_category_spending_summary` - Get spending summary with optional terminal graph visualization

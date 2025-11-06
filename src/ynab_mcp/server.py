@@ -287,6 +287,26 @@ async def update_transaction(
 
 
 @mcp.tool()
+async def delete_transaction(budget_id: str, transaction_id: str) -> str:
+    """Delete a transaction.
+
+    Args:
+        budget_id: The ID of the budget (use 'last-used' for default budget)
+        transaction_id: The ID of the transaction to delete
+
+    Returns:
+        JSON string with confirmation
+
+    Warning:
+        This permanently deletes the transaction. This action cannot be undone via the API.
+        The transaction will still appear in YNAB's "Undo" history for a limited time.
+    """
+    client = get_ynab_client()
+    result = await client.delete_transaction(budget_id, transaction_id)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 async def get_category_spending_summary(
     budget_id: str,
     category_id: str,

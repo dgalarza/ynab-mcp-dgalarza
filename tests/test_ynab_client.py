@@ -580,6 +580,31 @@ async def test_delete_scheduled_transaction(client):
 
 
 @pytest.mark.asyncio
+async def test_delete_transaction(client):
+    """Test delete_transaction sends correct request."""
+    # Mock successful deletion response
+    deleted_txn = {
+        "id": "txn-123",
+        "deleted": True,
+    }
+
+    with patch.object(client, "_make_request_with_retry", new_callable=AsyncMock) as mock_retry:
+        # Mock API response
+        mock_retry.return_value = {"data": {"transaction": deleted_txn}}
+
+        result = await client.delete_transaction("budget-123", "txn-123")
+
+        assert result["deleted"]
+        assert result["transaction"]["id"] == "txn-123"
+
+        # Verify DELETE request was made to correct URL
+        mock_retry.assert_called_once()
+        call_args = mock_retry.call_args
+        assert call_args.args[0] == "delete"
+        assert "txn-123" in call_args.args[1]
+
+
+@pytest.mark.asyncio
 async def test_get_transaction(client):
     """Test get_transaction returns formatted transaction with subtransactions."""
     # Mock transaction response with subtransactions
